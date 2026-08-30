@@ -403,40 +403,596 @@ final class ChartView: NSView {
 
     private func label(_ t: String, at p: NSPoint, size: CGFloat,
                        color: NSColor, bold: Bool = false) {
-        NSAttributedString(string: t, attributes: [
+        // 左の余白に収まらない注記は切り詰める。draw(at:) のままだと
+        // グラフの描画域へ100pt近くはみ出して、折れ線と文字が重なる。
+        let a = NSAttributedString(string: t, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: bold ? .semibold : .regular),
-            .foregroundColor: color]).draw(at: p)
+            .foregroundColor: color])
+        let room = max(40, left - p.x - 4)
+        if a.size().width <= room { a.draw(at: p); return }
+        a.draw(with: NSRect(x: p.x, y: p.y, width: room, height: size * 1.6),
+               options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin])
+    }
+}
+
+// MARK: - 共通の色と言葉
+
+enum Palette {
+    static func level(_ l: Level) -> NSColor {
+        switch l {
+        case .good: return .systemGreen
+        case .fair: return .systemOrange
+        case .bad: return .systemRed
+        case .offline: return .systemGray
+        }
+    }
+    static func level(score: Int) -> Level {
+        score >= 80 ? .good : (score >= 60 ? .fair : .bad)
+    }
+    static func word(_ l: Level) -> String {
+        switch l {
+        case .good: return "快適"
+        case .fair: return "ふつう"
+        case .bad: return "遅い"
+        case .offline: return "記録不足"
+        }
+    }
+
+    /// 上の帯と下の行を結ぶ識別色。良し悪しは緑/橙/赤で表しているので、その3色は避ける。
+    static let ids: [NSColor] = [
+        .systemBlue, .systemPurple, .systemTeal, .systemPink,
+        .systemIndigo, .systemBrown, .systemCyan, .systemGray,
+    ]
+    static func id(_ key: String, in places: [PlaceSummary]) -> NSColor {
+        guard let i = places.firstIndex(where: { $0.key == key }) else { return .systemGray }
+        return ids[i % ids.count]
+    }
+}
+
+/// 文字を置くだけの小さな道具。座標で組む描画が続くので、呼び出しを短くしておく。
+extension NSView {
+    @discardableResult
+    func put(_ t: String, x: CGFloat, y: CGFloat, size: CGFloat,
+             weight: NSFont.Weight = .regular, color: NSColor = .labelColor,
+             mono: Bool = false, maxWidth: CGFloat? = nil, lines: Int = 1) -> CGFloat {
+        let font = mono
+            ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+            : NSFont.systemFont(ofSize: size, weight: weight)
+        let s = NSAttributedString(string: t, attributes: [.font: font, .foregroundColor: color])
+        if let w = maxWidth {
+            s.draw(with: NSRect(x: x, y: y, width: w, height: size * 1.55 * CGFloat(lines)),
+                   options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin])
+            return min(w, s.size().width)
+        }
+        s.draw(at: NSPoint(x: x, y: y))
+        return s.size().width
+    }
+
+    /// 右端を揃えて置く。数字は右揃えでないと桁が比べられない。
+    @discardableResult
+    func putRight(_ t: String, rightEdge: CGFloat, y: CGFloat, size: CGFloat,
+                  weight: NSFont.Weight = .regular, color: NSColor = .labelColor,
+                  mono: Bool = true) -> CGFloat {
+        let font = mono
+            ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+            : NSFont.systemFont(ofSize: size, weight: weight)
+        let s = NSAttributedString(string: t, attributes: [.font: font, .foregroundColor: color])
+        s.draw(at: NSPoint(x: rightEdge - s.size().width, y: y))
+        return s.size().width
+    }
+}
+
+// MARK: - 結論
+
+/// 画面のいちばん上。ここだけ読んで閉じても用が足りるように書く。
+///
+/// 数字を並べる前に、まず「今日はどうだったのか」を文で言い切る。
+/// 表やグラフは、その結論を確かめたい人のためのもの。
+final class VerdictCard: NSView {
+    private var score: Int?
+    private var bad: Int?
+    private var level: Level = .offline
+    private var lines: [String] = []
+    func set(score: Int?, bad: Int?, level: Level, lines: [String]) {
+        self.score = score; self.bad = bad; self.level = level; self.lines = lines
+        needsDisplay = true
+    }
+    /// 動作確認から見る用。表と食い違っていないかを外から確かめられるようにしておく。
+    var shownScore: Int? { score }
+
+    // 手で描いた文字は、そのままでは読み上げの対象にならない。
+    // この画面の結論はここにしかないので、要素として名乗らせる。
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? {
+        (score.map { "総合 \(Palette.word(level)) \($0)点。" } ?? "") + lines.joined(separator: " ")
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirty: NSRect) {
+        NSColor.labelColor.withAlphaComponent(0.04).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
+        NSColor.separatorColor.setStroke()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+            .stroke()
+
+        // 大きな点数。色だけで良し悪しが分かるようにする。
+        let c = Palette.level(level)
+        let box = NSRect(x: 14, y: 14, width: 92, height: bounds.height - 28)
+        c.withAlphaComponent(0.12).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
+
+        let n = score.map { "\($0)" } ?? "—"
+        let w = NSAttributedString(string: n, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 32, weight: .semibold)]).size().width
+        put(n, x: box.midX - w / 2, y: box.minY + 6, size: 32, weight: .semibold, color: c,
+            mono: true)
+        let word = "ふだん \(Palette.word(level))"
+        let ww = NSAttributedString(string: word, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width
+        put(word, x: box.midX - ww / 2, y: box.minY + 48, size: 11, weight: .medium, color: c)
+        if let bad, let score, bad < score - 2 {
+            let t = "悪いとき \(bad)点"
+            let tw = NSAttributedString(string: t, attributes: [
+                .font: NSFont.systemFont(ofSize: 10)]).size().width
+            put(t, x: box.midX - tw / 2, y: box.minY + 64, size: 10,
+                color: Palette.level(Palette.level(score: bad)))
+        }
+
+        var y: CGFloat = 14
+        for (i, line) in lines.enumerated() {
+            let last = i == lines.count - 1 && lines.count > 2
+            _ = put(line, x: 120, y: y,
+                    size: i == 0 ? 15 : 12,
+                    weight: i == 0 ? .semibold : .regular,
+                    color: i == 0 ? .labelColor : .secondaryLabelColor,
+                    maxWidth: bounds.width - 134,
+                    lines: last ? 2 : 1)
+            y += i == 0 ? 26 : (last ? 36 : 19)
+        }
+    }
+}
+
+// MARK: - いつ
+
+/// 1日を時間ごとに見せ、その下に「そのときどこにつないでいたか」を並べる。
+///
+/// 「今日は遅かった」では動けない。「12時台が遅く、そこは nikopresso だった」
+/// まで一目で見えて初めて、次にどこへ座るかを決められる。
+final class HourStripView: NSView {
+    var hours: [HourSummary] = [] { didSet { needsDisplay = true } }
+    /// 色と並びの基準。下の行と同じ順序・同じ色を使う。
+    var places: [PlaceSummary] = [] { didSet { needsDisplay = true } }
+    var selectedKey: String? { didSet { needsDisplay = true } }
+    var selectedHour: Int? { didSet { needsDisplay = true } }
+    /// 何日ぶんをまとめているか。最悪の時間帯を選ぶ足切りが期間で変わる。
+    var days: Int = 1 { didSet { needsDisplay = true } }
+    var onSelectHour: ((Int?) -> Void)?
+    /// カーソルが指している時間の説明。窓側のラベルに出す。
+    var onHover: ((String?) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    private var hoverHour: Int?
+    private let legendH: CGFloat = 0
+    private let axisH: CGFloat = 15
+    private let placeH: CGFloat = 30
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self))
+    }
+
+    private func hour(at p: NSPoint) -> Int? {
+        let h = Int((p.x - gutter) / colW())
+        return (0..<24).contains(h) ? h : nil
+    }
+
+    override func mouseMoved(with e: NSEvent) {
+        let h = hour(at: convert(e.locationInWindow, from: nil))
+        guard h != hoverHour else { return }
+        hoverHour = h
+        onHover?(h.flatMap { hours.indices.contains($0) ? line(hours[$0]) : nil })
+        needsDisplay = true
+    }
+    override func mouseExited(with e: NSEvent) {
+        hoverHour = nil; onHover?(nil); needsDisplay = true
+    }
+    override func mouseDown(with e: NSEvent) {
+        guard let h = hour(at: convert(e.locationInWindow, from: nil)),
+              hours.indices.contains(h), hours[h].hasData else { onSelectHour?(nil); return }
+        onSelectHour?(selectedHour == h ? nil : h)
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityLabel() -> String? {
+        let recorded = hours.filter { $0.hasData }
+        guard !recorded.isEmpty else { return "時間ごとの調子。記録はありません" }
+        return "時間ごとの調子。" + recorded.map { line($0) }.joined(separator: "。")
+    }
+
+    private func name(_ key: String) -> String {
+        places.first { $0.key == key }?.name ?? key
+    }
+
+    /// カーソルを合わせた時間の一行。下の行と同じ言葉で書く。
+    func line(_ h: HourSummary) -> String {
+        guard h.hasData else { return "\(h.hour)時台 ・ 記録なし" }
+        var t = "\(h.hour)時台 ・ ふだん \(h.score)点（\(Palette.word(h.level))） ・ \(h.minutes)分ぶん"
+        if let k = h.byKey.max(by: { $0.value < $1.value })?.key { t += " ・ \(name(k))" }
+        if h.badSeconds >= 30 {
+            let cause = h.topProblem.map { "\($0.plainCause)時間" } ?? "崩れた時間"
+            t += " ・ \(cause)が \(PlaceReport.spanWord(h.badSeconds))"
+        }
+        return t
+    }
+
+    /// その時間、いちばん長くつないでいた先。帯の下の区切りに使う。
+    private func dominant(_ h: HourSummary) -> String? {
+        h.byKey.max { $0.value < $1.value }?.key
+    }
+
+    /// 目盛りの数字を置く左の余白。ここを空けないと0時の柱と重なって読めない。
+    private let gutter: CGFloat = 24
+
+    private func colW() -> CGFloat { max(1, (bounds.width - gutter) / 24) }
+
+    override func draw(_ dirty: NSRect) {
+        let colW = colW()
+        let barTop = legendH + 6
+        let labelTop = bounds.height - placeH - axisH
+        let barBottom = labelTop
+        let barArea = max(10, barBottom - barTop)
+
+        // 100点満点の目盛り。基準線が無いと柱の高さを比べられない。
+        for (v, label) in [(80.0, "80"), (60.0, "60")] {
+            let y = barBottom - barArea * CGFloat(v / 100)
+            NSColor.separatorColor.setFill()
+            NSRect(x: gutter, y: y, width: bounds.width - gutter, height: 1).fill()
+            put(label, x: 2, y: y - 7, size: 9.5, color: .tertiaryLabelColor, mono: true)
+        }
+
+        for (i, h) in hours.enumerated() {
+            let x = gutter + CGFloat(i) * colW
+            let col = NSRect(x: x + 2.5, y: barTop, width: max(2, colW - 5), height: barArea)
+
+            if selectedHour == i || hoverHour == i {
+                NSColor.labelColor.withAlphaComponent(selectedHour == i ? 0.10 : 0.05).setFill()
+                NSBezierPath(roundedRect: NSRect(x: x, y: barTop - 4, width: colW,
+                                                 height: labelTop - barTop + axisH + 4),
+                             xRadius: 5, yRadius: 5).fill()
+            }
+
+            guard h.hasData else {
+                // 記録が無い時間は、床にうっすら残すだけ。空白は「良かった」に見える。
+                NSColor.labelColor.withAlphaComponent(0.06).setFill()
+                NSRect(x: col.minX, y: barBottom - 2, width: col.width, height: 2).fill()
+                continue
+            }
+
+            let hgt = max(4, barArea * CGFloat(h.score) / 100)
+            let bar = NSRect(x: col.minX, y: barBottom - hgt, width: col.width, height: hgt)
+            // 数分しか記録の無い時間は、同じ高さでも重みが違う。薄くして、点数も伏せる。
+            let thin = h.seconds < 600
+            // 選んだ先の話をしているときは、それ以外の時間を消さずに薄くする。
+            // 消すと比べる相手がいなくなり、選んだ先が良く見えるだけの画面になる。
+            let other = selectedKey != nil && dominant(h) != selectedKey
+            let alpha: CGFloat = other ? 0.18 : (thin ? 0.35 : 1)
+
+            Palette.level(h.level).withAlphaComponent(alpha).setFill()
+            NSBezierPath(roundedRect: bar, xRadius: 3, yRadius: 3).fill()
+
+            // 点数は柱の上に直接。凡例と首っ引きにさせない。
+            if colW > 26 && !thin && !other {
+                let s = "\(h.score)"
+                let w = NSAttributedString(string: s, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)])
+                    .size().width
+                put(s, x: col.midX - w / 2, y: max(barTop - 2, bar.minY - 13), size: 9.5,
+                    weight: .medium, color: .secondaryLabelColor, mono: true)
+            }
+        }
+
+        // 時刻の目盛り。3時間おきに置く。
+        for i in stride(from: 0, to: 24, by: 3) {
+            put("\(i)時", x: gutter + CGFloat(i) * colW + 2, y: labelTop + 1, size: 9.5,
+                color: .tertiaryLabelColor)
+        }
+
+        drawPlaces(top: bounds.height - placeH, colW: colW)
+    }
+
+    /// 帯の下に「いつ、どこにつないでいたか」を区間で並べる。
+    /// 上の柱と下の行を結ぶのはこの帯なので、色だけでなく名前も必ず書く。
+    private func drawPlaces(top: CGFloat, colW: CGFloat) {
+        var i = 0
+        while i < hours.count {
+            guard let key = dominant(hours[i]) else { i += 1; continue }
+            var j = i
+            while j + 1 < hours.count, dominant(hours[j + 1]) == key { j += 1 }
+
+            let span = (i...j).reduce(0.0) { $0 + (hours[$1].byKey[key] ?? 0) }
+            let x = gutter + CGFloat(i) * colW + 2.5
+            let w = CGFloat(j - i + 1) * colW - 5
+            let dim = (selectedKey != nil && selectedKey != key) || span < 600
+            let c = Palette.id(key, in: places)
+            c.withAlphaComponent(dim ? 0.25 : 1).setFill()
+            NSBezierPath(roundedRect: NSRect(x: x, y: top + 2, width: w, height: 5),
+                         xRadius: 2.5, yRadius: 2.5).fill()
+            // 数分しか居なかった区間に名前を出すと、潰れた文字が並ぶだけで読めない
+            if span >= 600 {
+                put(name(key), x: x, y: top + 10, size: 10,
+                    weight: dim ? .regular : .medium,
+                    color: dim ? .tertiaryLabelColor : .secondaryLabelColor,
+                    maxWidth: w)
+            }
+            i = j + 1
+        }
+    }
+}
+
+// MARK: - どこ
+
+/// 比べるための1行。
+///
+/// 数字だけを並べても「15 は良いのか悪いのか」が分からない。
+/// 値のすぐ下に何の値かを書き、位置を揃えて、初めて比較になる。
+final class CompareRow: NSView {
+    let place: PlaceSummary
+    private let accent: NSColor
+    var selected: Bool { didSet { needsDisplay = true } }
+    var onClick: (() -> Void)?
+    private var hover = false { didSet { needsDisplay = true } }
+
+    override var isFlipped: Bool { true }
+
+    /// 右側に固定幅で置く数字の列。名前の長さで位置がずれないようにする。
+    /// どの列も「ふだん / 悪いとき」の対で出す。代表値だけを並べると、
+    /// ほとんど快適だが時々完全に崩れる場所と、常にそこそこの場所が同じ数字になる。
+    enum Cell { case span, rtt, jitter, loss, rssi }
+    static let cells: [(kind: Cell, title: String, width: CGFloat)] = [
+        (.span, "使った時間", 88), (.rtt, "応答 ms", 84), (.jitter, "ゆらぎ ms", 84),
+        (.loss, "とりこぼし %", 84), (.rssi, "電波 dBm", 84),
+    ]
+    static let scoreW: CGFloat = 116
+
+    init(_ p: PlaceSummary, accent: NSColor, selected: Bool) {
+        self.place = p; self.accent = accent; self.selected = selected
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow,
+                                                 .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with e: NSEvent) { hover = true }
+    override func mouseExited(with e: NSEvent) { hover = false }
+    override func mouseDown(with e: NSEvent) { onClick?() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? {
+        guard place.enough, let mid = place.score.mid else {
+            return "\(place.name)。記録が短く判定できません"
+        }
+        var t = "\(place.name)。ふだん \(Int(mid))点 \(Palette.word(place.level))"
+        if let bad = place.score.bad { t += "、悪いとき \(Int(bad))点" }
+        t += "。\(PlaceReport.spanWord(place.seconds))つないで、\(place.detail)"
+        return t
+    }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+
+    static func timeWord(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)分" }
+        let h = minutes / 60, m = minutes % 60
+        return m == 0 ? "\(h)時間" : "\(h)時間\(m)分"
+    }
+
+    override func draw(_ dirty: NSRect) {
+        (selected ? NSColor.controlAccentColor.withAlphaComponent(0.10)
+                  : NSColor.labelColor.withAlphaComponent(hover ? 0.07 : 0.03)).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        // 地との差が 1.07:1 しかなく、行の矩形が見えない。枠で境目を作る。
+        (selected ? NSColor.controlAccentColor.withAlphaComponent(0.6) : NSColor.separatorColor)
+            .setStroke()
+        let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
+                                  xRadius: 8, yRadius: 8)
+        border.lineWidth = selected ? 1.5 : 1
+        border.stroke()
+
+        // 左端の色。上の帯の区間と同じ色で、どの時間帯の話かを結ぶ。
+        accent.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 8, width: 4, height: bounds.height - 16),
+                     xRadius: 2, yRadius: 2).fill()
+
+        var right = bounds.width - 12
+        for cell in CompareRow.cells.reversed() {
+            drawCell(cell, rightEdge: right)
+            right -= cell.width
+        }
+        drawScore(rightEdge: right)
+
+        // 名前の欄が余りを全部取ると、名前と数字の間に数百ptの空白ができて
+        // 目で結べなくなる。上限を置いて、余りは数字側に寄せる。
+        let nameW = min(340, max(90, right - CompareRow.scoreW - 20))
+        put(place.name, x: 14, y: 9, size: 14, weight: .semibold, maxWidth: nameW)
+        let sub = [place.sub, place.hourWord].filter { !$0.isEmpty }.joined(separator: " ・ ")
+        put(sub, x: 14, y: 30, size: 11, color: .secondaryLabelColor, maxWidth: nameW)
+        put(place.detail, x: 14, y: 47, size: 11,
+            color: place.badSeconds > 0 ? .secondaryLabelColor : .tertiaryLabelColor,
+            maxWidth: nameW)
+    }
+
+    private func drawScore(rightEdge: CGFloat) {
+        guard place.enough, let mid = place.score.mid else {
+            putRight("—", rightEdge: rightEdge, y: 8, size: 27, weight: .semibold,
+                     color: .tertiaryLabelColor)
+            putRight("記録不足", rightEdge: rightEdge, y: 44, size: 10.5,
+                     color: .tertiaryLabelColor, mono: false)
+            return
+        }
+        let c = Palette.level(place.level)
+        var right = rightEdge
+        if let bad = place.score.bad, bad < mid - 2 {
+            right -= putRight(" / \(Int(bad))", rightEdge: rightEdge, y: 16, size: 15,
+                              color: Palette.level(Palette.level(score: Int(bad))))
+        }
+        putRight("\(Int(mid))", rightEdge: right, y: 8, size: 27, weight: .semibold, color: c)
+        putRight(Palette.word(place.level), rightEdge: rightEdge, y: 44, size: 10.5,
+                 weight: .medium, color: c, mono: false)
+    }
+
+    /// 良し悪しの手がかりが無い数字は比較に使えない。しきい値を超えた側だけ色を付ける。
+    private func tint(_ kind: CompareRow.Cell, _ v: Double) -> NSColor {
+        switch kind {
+        case .rtt:    return v > 50 ? .systemRed : (v > 25 ? .systemOrange : .labelColor)
+        case .jitter: return v > 40 ? .systemRed : (v > 20 ? .systemOrange : .labelColor)
+        case .loss:   return v > 5 ? .systemRed : (v > 1 ? .systemOrange : .labelColor)
+        case .rssi:   return v < -70 ? .systemRed : (v < -60 ? .systemOrange : .labelColor)
+        case .span:   return .labelColor
+        }
+    }
+
+    private func drawCell(_ cell: (kind: CompareRow.Cell, title: String, width: CGFloat),
+                          rightEdge: CGFloat) {
+        putRight(cell.title, rightEdge: rightEdge, y: 44, size: 10.5,
+                 color: .secondaryLabelColor, mono: false)
+
+        // 使った時間だけは裾を持たない。1つの値で足りる。
+        if cell.kind == .span {
+            putRight(PlaceReport.spanWord(place.seconds), rightEdge: rightEdge, y: 18, size: 16)
+            return
+        }
+        guard place.enough else {
+            putRight("—", rightEdge: rightEdge, y: 18, size: 16, color: .tertiaryLabelColor)
+            return
+        }
+        let v = CompareRow.value(place, cell.kind)
+        drawPair(v.mid, v.bad, cell.kind, rightEdge)
+    }
+
+    /// どの列に何の値を出すか。描画から切り出しておく。
+    /// 見出しの文字列で振り分けていたときは、見出しを直しただけで
+    /// 全列が同じ値になり、それをテストが素通りした。
+    static func value(_ p: PlaceSummary, _ kind: Cell) -> (mid: Double?, bad: Double?) {
+        switch kind {
+        case .rtt:    return (p.rtt.mid, p.rtt.bad)
+        case .jitter: return (p.jitter.mid, p.jitter.bad)
+        // 損失率の中央値は5発中0発が大半で常に0になり、何も区別できない。
+        // 「1回でも落ちた計測の割合」なら差が出る。
+        case .loss:   return (p.lossRatio.map { $0 * 100 }, nil)
+        case .rssi:   return (p.rssi.map { Double($0) }, nil)
+        case .span:   return (p.seconds, nil)
+        }
+    }
+
+    private func drawPair(_ mid: Double?, _ bad: Double?, _ kind: CompareRow.Cell,
+                          _ rightEdge: CGFloat) {
+        var right = rightEdge
+        if let bad, bad > (mid ?? 0) + 1 {
+            right -= putRight(" / \(Int(bad.rounded()))", rightEdge: right, y: 20, size: 14,
+                              color: tint(kind, bad))
+        }
+        guard let mid else {
+            putRight("—", rightEdge: right, y: 18, size: 16, color: .tertiaryLabelColor)
+            return
+        }
+        let text = kind == .loss ? String(format: "%.1f", mid) : "\(Int(mid.rounded()))"
+        putRight(text, rightEdge: right, y: 18, size: 16, color: tint(kind, mid))
     }
 }
 
 // MARK: - ウィンドウ
+
+/// スクロールの中身に使う縦スタック。
+/// 上下が反転していないと、内容がはみ出したときに下端から表示されてしまう。
+final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
 
 final class HistoryWindowController: NSWindowController {
     private let log: SampleLog
     private let chart = ChartView()
     private let text = NSTextView()
     private let rangePop = NSPopUpButton()
-    private let summary = NSTextField(labelWithString: "")
-    private var current: [Sample] = []
+    private let unitSeg = NSSegmentedControl(labels: ["APごと", "接続先ごと"],
+                                             trackingMode: .selectOne, target: nil, action: nil)
+    private let clearButton = NSButton()
+    private let verdict = VerdictCard()
+    private let hourStrip = HourStripView()
+    private let hoursTitle = NSTextField(labelWithString: "時間ごとの調子")
+    private let hoursHint = NSTextField(labelWithString: "")
+    private let placesTitle = NSTextField(labelWithString: "つないでいた先")
+    private let placesHint = NSTextField(labelWithString: "")
+    private let placeStack = FlippedStackView()
+    private let detailToggle = NSButton()
+    private let detailBox = NSStackView()
 
-    /// 期間の選択肢。(表示名, さかのぼる日数)
+    private var current: [Sample] = []
+    private var places: [PlaceSummary] = []
+    private var rows: [PlaceSummary] = []
+    private var grouping: PlaceGrouping = .ap
+    private var selectedKey: String?
+    private var selectedHour: Int?
+    private var showsDetail = false
+    /// 折りたたみを開いたときに描く対象。開くまで組み立てない。
+    private var detailSamples: [Sample] = []
+
     private let ranges: [(String, Int)] = [
         ("今日", 1), ("過去3日", 3), ("過去7日", 7), ("過去30日", 30)
     ]
 
     init(log: SampleLog) {
         self.log = log
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 820),
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 720),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable],
                          backing: .buffered, defer: false)
-        w.title = "WiFiDoctor — 推移と診断レポート"
-        w.setFrameAutosaveName("WiFiDoctorHistory")
-        w.acceptsMouseMovedEvents = true      // クロスヘアの追従に必要
-        w.center()
+        w.title = "WiFiDoctor — いつ・どこが遅かったか"
+        w.minSize = NSSize(width: 820, height: 560)
+        w.acceptsMouseMovedEvents = true
         super.init(window: w)
         build()
+        // 保存済みのサイズを使うが、壊れて極端に小さい場合は既定に戻す。
+        // 一度潰れたサイズが保存されると、次から開くたびに潰れたままになる。
+        w.setFrameAutosaveName("WiFiDoctorHistory")
+        // 復元値は minSize でクランプされてから返るので、minSize と比べても必ず通ってしまう。
+        // 中身が必要としている大きさと比べ、足りなければ既定に戻す。
+        let need = w.contentView?.fittingSize ?? .zero
+        if w.frame.width < need.width || w.frame.height < need.height {
+            w.setFrame(NSRect(x: 0, y: 0, width: max(940, need.width),
+                              height: max(720, need.height + 28)), display: false)
+            w.center()
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 見出しと、その右に添える小さな説明を1行にする。
+    private func titleRow(_ title: NSTextField, _ hint: NSTextField,
+                          control: NSView? = nil) -> NSStackView {
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .tertiaryLabelColor
+        var views: [NSView] = [title]
+        if let control { views.append(control) }
+        views.append(contentsOf: [hint, NSView()])
+        let s = NSStackView(views: views)
+        s.orientation = .horizontal
+        s.spacing = 10
+        s.alignment = .centerY
+        return s
+    }
 
     private func build() {
         guard let content = window?.contentView else { return }
@@ -444,99 +1000,389 @@ final class HistoryWindowController: NSWindowController {
         rangePop.addItems(withTitles: ranges.map { $0.0 })
         rangePop.target = self; rangePop.action = #selector(reloadAction)
 
+        unitSeg.selectedSegment = 0
+        unitSeg.target = self; unitSeg.action = #selector(unitChanged)
+        unitSeg.controlSize = .small
+
+        clearButton.title = "すべて表示に戻す"
+        clearButton.bezelStyle = .rounded
+        clearButton.target = self; clearButton.action = #selector(clearSelection)
+        clearButton.isHidden = true
+
         let bar = NSStackView(views: [
-            NSTextField(labelWithString: "期間"), rangePop, NSView(),
+            NSTextField(labelWithString: "期間"), rangePop,
+            NSView(),
+            clearButton,
             NSButton(title: "更新", target: self, action: #selector(reloadAction)),
             NSButton(title: "レポートを書き出す", target: self, action: #selector(exportReport)),
         ])
         bar.orientation = .horizontal; bar.spacing = 8
 
-        summary.font = .systemFont(ofSize: 11.5, weight: .medium)
-        summary.textColor = .secondaryLabelColor
+        hourStrip.onSelectHour = { [weak self] h in self?.selectHour(h) }
+        hourStrip.onHover = { [weak self] t in self?.showHint(t) }
+
+        placeStack.orientation = .vertical
+        placeStack.alignment = .leading
+        placeStack.spacing = 6
+
+        let placeScroll = NSScrollView()
+        placeScroll.documentView = placeStack
+        // documentView にすると自動サイズ調整が付き、幅も高さも 0 に固定されてしまう。
+        placeStack.translatesAutoresizingMaskIntoConstraints = false
+        placeScroll.hasVerticalScroller = true
+        placeScroll.drawsBackground = false
+        placeScroll.borderType = .noBorder
+
+        // 詳しい情報は既定でたたんでおく。普段見るものではない。
+        detailToggle.title = "▸ 詳しく見る（グラフと生のレポート）"
+        detailToggle.bezelStyle = .inline
+        detailToggle.setButtonType(.momentaryPushIn)
+        detailToggle.target = self
+        detailToggle.action = #selector(toggleDetail)
+
+        text.isEditable = false
+        text.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.textContainerInset = NSSize(width: 10, height: 10)
+        let textScroll = NSScrollView()
+        textScroll.documentView = text
+        textScroll.hasVerticalScroller = true
+        textScroll.borderType = .bezelBorder
 
         let legend = NSStackView()
-        legend.orientation = .horizontal; legend.spacing = 10
-        for v in Verdict.allCases {
+        legend.orientation = .horizontal
+        legend.spacing = 10
+        for v in [Verdict.ok, .congested, .sticky, .weak, .isp, .selfTraffic] {
             let l = NSTextField(labelWithString: "■ \(v.label)")
             l.font = .systemFont(ofSize: 10)
             l.textColor = ChartView.color(v.rawValue)
             legend.addArrangedSubview(l)
         }
-        legend.addArrangedSubview({
-            let l = NSTextField(labelWithString: "┆ AP切替")
-            l.font = .systemFont(ofSize: 10); l.textColor = .systemOrange; return l
-        }())
         legend.addArrangedSubview(NSView())
-        legend.addArrangedSubview({
-            let l = NSTextField(labelWithString: "グラフにカーソルを合わせるとその時刻の詳細が出ます")
-            l.font = .systemFont(ofSize: 10); l.textColor = .tertiaryLabelColor; return l
-        }())
 
-        text.isEditable = false
-        text.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        text.textContainerInset = NSSize(width: 10, height: 10)
-        let scroll = NSScrollView()
-        scroll.documentView = text
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
+        detailBox.orientation = .vertical
+        detailBox.alignment = .leading
+        detailBox.spacing = 8
+        detailBox.setViews([chart, legend, textScroll], in: .top)
+        detailBox.isHidden = true
+        fillWidth(detailBox)
 
-        let stack = NSStackView(views: [bar, summary, chart, legend, scroll])
+        let hoursHead = titleRow(hoursTitle, hoursHint)
+        let placesHead = titleRow(placesTitle, placesHint, control: unitSeg)
+
+        // 縦に積むものはすべて幅いっぱい。alignment に .width は使えない
+        // （縦スタックでは無効な値で、黙って .notAnAttribute になる。すると
+        // 揃える制約が一切張られず、子は最小幅のまま右端に寄る）。
+        // .leading で左端を揃え、幅は fillWidth で個別に張る。
+        //
+        // 上から「結論」→「いつ」→「どこ」。
+        // 結論だけ読んで閉じてもよく、確かめたい人は下へ進める順にする。
+        // ボタンを幅いっぱいに伸ばすと文字が中央に来て、無効なラベルに見える。左に寄せる。
+        let toggleRow = NSStackView(views: [detailToggle, NSView()])
+        toggleRow.orientation = .horizontal
+
+        let stack = NSStackView(views: [bar, verdict, hoursHead, hourStrip,
+                                        placesHead, placeScroll,
+                                        toggleRow, detailBox])
         stack.orientation = .vertical
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
+        fillWidth(stack)
         content.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             stack.topAnchor.constraint(equalTo: content.topAnchor),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            chart.heightAnchor.constraint(greaterThanOrEqualToConstant: 420),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            // 子の幅をスタックに合わせた以上、横幅を押し広げるものが無くなる。
+            // 下限を置かないと折り返しラベルが縦に伸びきって、窓ごと細長く潰れる。
+            stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 820),
+            verdict.heightAnchor.constraint(equalToConstant: 92),
+            hourStrip.heightAnchor.constraint(equalToConstant: 154),
+            // スクロールの中身は、自分で clip view に留めないと位置も幅も決まらない。
+            // 高さだけは行の積み上げに任せる（それがスクロール量になる）。
+            placeScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            placeStack.topAnchor.constraint(equalTo: placeScroll.contentView.topAnchor),
+            placeStack.leadingAnchor.constraint(equalTo: placeScroll.contentView.leadingAnchor),
+            placeStack.widthAnchor.constraint(equalTo: placeScroll.contentView.widthAnchor),
+            // 直値の高さを required にすると、詳細を開いた瞬間に窓が
+            // 画面より高くなって下が欠ける。譲れる形にして、狭い画面では縮める。
+            chart.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
         ])
+        // 好みの高さを制約で書くと、優先度を下げても fittingSize に入ってしまい、
+        // 詳細を開いた瞬間に窓が画面より高くなる（下が欠けて縮められない）。
+        // 下限だけを制約にして、余った高さは「伸びやすさ」の順で配る。
+        chart.setContentHuggingPriority(.init(250), for: .vertical)
+        textScroll.setContentHuggingPriority(.init(249), for: .vertical)
+        placeScroll.setContentHuggingPriority(.init(251), for: .vertical)
+
+        // 横に並べるものが縦幅を押し広げないようにする
+        for v in [bar, hoursHead, placesHead, toggleRow] as [NSView] {
+            v.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        }
+        verdict.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        hourStrip.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        detailToggle.setContentHuggingPriority(.defaultHigh, for: .vertical)
+    }
+
+    /// 縦スタックの子を、余白を除いた幅いっぱいに広げる。
+    private func fillWidth(_ stack: NSStackView) {
+        let inset = stack.edgeInsets.left + stack.edgeInsets.right
+        for v in stack.arrangedSubviews {
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -inset).isActive = true
+        }
+    }
+
+    @objc private func toggleDetail() {
+        showsDetail.toggle()
+        if showsDetail { renderDetail() }
+        detailBox.isHidden = !showsDetail
+        detailToggle.title = showsDetail
+            ? "▾ 詳しい情報を閉じる"
+            : "▸ 詳しく見る（グラフと生のレポート）"
     }
 
     @objc private func reloadAction() { reload() }
 
-    func reload() {
-        let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
-        let cal = Calendar.current
-        var all: [Sample] = []
-        for d in 0..<days {
-            guard let date = cal.date(byAdding: .day, value: -d, to: Date()) else { continue }
-            all.append(contentsOf: log.load(date: date))
-        }
-        // スリープ中の飛び飛びの記録はグラフからも外す。
-        // 残すと灰色だらけになり「一晩中壊れていた」ように見える。
-        let sorted = Sample.representative(all.sorted { $0.at < $1.at })
-        current = sorted
-        // 30日分は最大14万件になる。全点を折れ線にすると描画が重く、
-        // 画素より細かい情報は見えないので、悪化を保ったまま間引く。
-        chart.samples = SampleLog.downsample(sorted, maxCount: 4000)
-        text.string = log.report(samples: current,
-                                 title: ranges[max(0, rangePop.indexOfSelectedItem)].0)
-        summary.stringValue = headline(current)
+    @objc private func unitChanged() {
+        grouping = unitSeg.selectedSegment == 1 ? .network : .ap
+        selectedKey = nil          // 単位が変われば鍵の意味も変わる
+        render()
     }
 
-    private func headline(_ s: [Sample]) -> String {
-        guard !s.isEmpty else { return "記録なし" }
-        let bad = s.filter { Verdict(rawValue: $0.verdict)?.isProblem ?? false }
-        let pct = Int(Double(bad.count) / Double(s.count) * 100)
-        let avg = Sample.averageScore(s)
-        let hours = Sample.totalSeconds(s) / 3600
-        var t = String(format: "観測 %.1f時間 / 平均スコア %.0f / 問題ありだった割合 %d%%", hours, avg, pct)
-        if s.count > 4000 { t += "（グラフは表示のため間引いています。悪化した瞬間は残しています）" }
+    @objc private func clearSelection() {
+        selectedKey = nil; selectedHour = nil; render()
+    }
+
+    private func selectHour(_ h: Int?) { selectedHour = h; render() }
+    private func select(_ key: String) {
+        selectedKey = (selectedKey == key) ? nil : key
+        render()
+    }
+
+    /// カーソルが指している時間の説明。見出しの右に出して、画面が飛び跳ねないようにする。
+    private func showHint(_ t: String?) {
+        hoursHint.stringValue = t ?? defaultHint
+    }
+
+    /// カーソルを合わせている時間の内訳だけを出す。操作の説明は書かない。
+    private var defaultHint: String {
+        selectedHour.map { "\($0)時台" } ?? ""
+    }
+
+    /// 読み込みは裏で行う。30日ぶんは10万件を超え、main で回すと数秒固まる。
+    /// 途中で期間を切り替えたときに古い結果で上書きしないよう、世代で弾く。
+    private var loadGeneration = 0
+
+    func reload() {
+        let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
+        loadGeneration += 1
+        let generation = loadGeneration
+        if current.isEmpty {
+            verdict.set(score: nil, bad: nil, level: .offline, lines: ["記録を読み込んでいます…"])
+        }
+        let log = self.log
+        DispatchQueue.global(qos: .userInitiated).async {
+            let cal = Calendar.current
+            var all: [Sample] = []
+            for d in 0..<days {
+                guard let date = cal.date(byAdding: .day, value: -d, to: Date()) else { continue }
+                all.append(contentsOf: log.load(date: date))
+            }
+            DispatchQueue.main.async {
+                guard generation == self.loadGeneration else { return }
+                self.apply(all)
+            }
+        }
+    }
+
+    /// 記録を受け取って描き直す。動作確認から実データ無しで呼べるように分けてある。
+    func apply(_ all: [Sample]) {
+        current = Sample.representative(all.sorted { $0.at < $1.at })
+        selectedHour = nil; selectedKey = nil
+        render()
+    }
+
+    /// 上の帯と下の行を、同じ選択状態から一度に描き直す。
+    /// 別々に更新すると、片方だけ古い状態が残って話が食い違う。
+    private func render() {
+        // 代表秒数は全部の集計の土台になる。中で sort が走るので一度だけ求めて配って回る。
+        let durs = Sample.durations(current)
+        places = PlaceReport.summaries(current, by: grouping, durations: durs)
+        if selectedKey != nil, !places.contains(where: { $0.key == selectedKey }) {
+            selectedKey = nil
+        }
+
+        // 下の行は「選んだ時間だけ」に切り替わる。
+        // 帯は1日を見渡すものなので常に全時間ぶんを描き、選択外を薄くする（消さない）。
+        let cal = Calendar.current
+        let (tableSamples, tableDurs) = selectedHour.map { h in
+            slice(current, durs) { cal.component(.hour, from: $0.at) == h }
+        } ?? (current, durs)
+        rows = PlaceReport.summaries(tableSamples, by: grouping, durations: tableDurs)
+
+        let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
+        hourStrip.places = places
+        hourStrip.hours = HourReport.hours(current, by: grouping, durations: durs)
+        hourStrip.days = days
+        hourStrip.selectedKey = selectedKey
+        hourStrip.selectedHour = selectedHour
+        hoursTitle.stringValue = days > 1
+            ? "時間帯ごとの調子（\(days)日ぶんの合計）" : "時間ごとの調子"
+        hoursHint.stringValue = defaultHint
+
+        placesTitle.stringValue = selectedHour.map { "\($0)時台につないでいた先" }
+            ?? "つないでいた先を比べる"
+        clearButton.isHidden = selectedKey == nil && selectedHour == nil
+
+        renderRows()
+
+        // 結論・グラフ・書き出しは、いま画面が見せている範囲と同じものを見る。
+        // ここがずれると、12時台を選んで書き出したのに丸1日分が出る。
+        let (focusSamples, focusDurs) = focused(tableSamples, tableDurs)
+        renderVerdict(focusSamples, focusDurs, days: days)
+        detailSamples = focusSamples
+        if showsDetail { renderDetail() }
+    }
+
+    /// 標本とその代表秒数を、対にしたまま絞り込む。
+    private func slice(_ s: [Sample], _ d: [TimeInterval],
+                       _ keep: (Sample) -> Bool) -> ([Sample], [TimeInterval]) {
+        var os: [Sample] = [], od: [TimeInterval] = []
+        for (i, x) in s.enumerated() where keep(x) { os.append(x); od.append(d[i]) }
+        return (os, od)
+    }
+
+    /// 選んだ先に絞る。行の選択は「その先の話をする」という意味なので、
+    /// 結論もグラフも書き出しも同じ範囲を見る。
+    private func focused(_ s: [Sample], _ d: [TimeInterval]) -> ([Sample], [TimeInterval]) {
+        guard let key = selectedKey else { return (s, d) }
+        return slice(s, d) { (grouping == .ap ? $0.bssid : $0.ssid) == key }
+    }
+
+    private func renderRows() {
+        placeStack.arrangedSubviews.forEach {
+            placeStack.removeArrangedSubview($0); $0.removeFromSuperview()
+        }
+        guard !rows.isEmpty else {
+            // なぜ空なのかを書く。効いている条件を並べないと、壊れたのかと思われる。
+            let cond = [selectedHour.map { "\($0)時台" },
+                        selectedKey.flatMap { k in places.first { $0.key == k }?.name }]
+                .compactMap { $0 }.joined(separator: " ・ ")
+            let t = NSTextField(wrappingLabelWithString: current.isEmpty
+                ? "この期間の記録がまだありません。しばらく使うと、つないでいた先がここに並びます。\n"
+                    + "APに呼び名を付けておくと、会議室の名前で並びます。"
+                : "\(cond)の記録はありません。")
+            t.font = .systemFont(ofSize: 12)
+            t.textColor = .secondaryLabelColor
+            placeStack.addArrangedSubview(t)
+            return
+        }
+        for p in rows {
+            let row = CompareRow(p, accent: Palette.id(p.key, in: places),
+                                 selected: p.key == selectedKey)
+            row.onClick = { [weak self] in self?.select(p.key) }
+            row.translatesAutoresizingMaskIntoConstraints = false
+            placeStack.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: placeStack.widthAnchor),
+                row.heightAnchor.constraint(equalToConstant: 72),
+            ])
+        }
+    }
+
+    /// 折りたたんだ中身は、開くまで作らない。
+    /// レポート本文の組み立ては記録の量に比例して重く、畳んだままなら誰も見ない。
+    private func renderDetail() {
+        chart.samples = SampleLog.downsample(detailSamples, maxCount: 4000)
+        text.string = log.report(samples: detailSamples, title: reportTitle,
+                                 alreadyFiltered: true)
+    }
+
+    /// 書き出しに、いま何で絞っているのかを残す。受け取った人が範囲を誤解しないため。
+    private var reportTitle: String {
+        var t = ranges[max(0, rangePop.indexOfSelectedItem)].0
+        if let h = selectedHour { t += " \(h)時台" }
+        if let n = selectedKey.flatMap({ k in places.first { $0.key == k }?.name }) { t += " / \(n)" }
         return t
+    }
+
+    /// いちばん上の結論。数字を並べる前に、まず言い切る。
+    private func renderVerdict(_ s: [Sample], _ d: [TimeInterval], days: Int) {
+        guard !s.isEmpty else {
+            verdict.set(score: nil, bad: nil, level: .offline, lines: ["まだ記録がありません。"])
+            return
+        }
+        // つながっていなかった時間は「調子」ではないので、点数の集計から外す。
+        var scores: [(Double, TimeInterval)] = []
+        var connected: TimeInterval = 0
+        var badSeconds: TimeInterval = 0
+        var byVerdict: [Verdict: TimeInterval] = [:]
+        for (i, x) in s.enumerated() where x.associated && x.scoreVerdict != .offline {
+            scores.append((Double(x.score), d[i]))
+            connected += d[i]
+            let v = x.scoreVerdict ?? .ok
+            if v.isProblem { badSeconds += d[i]; byVerdict[v, default: 0] += d[i] }
+        }
+        guard connected > 0, let mid = PlaceReport.quantile(scores, 0.5) else {
+            verdict.set(score: nil, bad: nil, level: .offline,
+                        lines: ["この範囲には、つながっていた記録がありません。"])
+            return
+        }
+        let low = PlaceReport.quantile(scores, 0.10)
+
+        let where_ = [selectedHour.map { "\($0)時台" },
+                      selectedKey.flatMap { k in places.first { $0.key == k }?.name }]
+            .compactMap { $0 }.joined(separator: "・")
+        let head = where_.isEmpty
+            ? ranges[max(0, rangePop.indexOfSelectedItem)].0
+            : "\(ranges[max(0, rangePop.indexOfSelectedItem)].0)の \(where_)"
+        var lines = ["\(head)は \(PlaceReport.spanWord(connected))つないで、"
+                     + (badSeconds < 30 ? "崩れた時間はありませんでした。"
+                        : "そのうち \(PlaceReport.spanWord(badSeconds)) は崩れていました。")]
+
+        // 2行目に「いつ・どこ・なぜ」を1文で。打ち手の長文はレポート側に置く。
+        let hours = HourReport.hours(s, by: grouping, durations: d)
+        var second: [String] = []
+        if let w = HourReport.worst(hours, days: days) {
+            // 過半数を占めていない先を名指しすると、行き来していただけの場所を犯人にする。
+            let top = w.byKey.max { $0.value < $1.value }
+            let who = (top.map { $0.value > w.seconds * 0.5 } ?? false)
+                ? top.flatMap { pair in places.first { $0.key == pair.key }?.name } : nil
+            second.append("いちばん悪かったのは \(w.hour)時台"
+                + (who.map { "の \($0)" } ?? "") + "（\(w.score)点）")
+        }
+        if let top = byVerdict.max(by: { $0.value < $1.value }), top.value > connected * 0.1 {
+            second.append("多くは「\(top.key.plainCause)」時間")
+        }
+        if !second.isEmpty { lines.append(second.joined(separator: "、") + "。") }
+
+        verdict.set(score: Int(mid.rounded()), bad: low.map { Int($0.rounded()) },
+                    level: Palette.level(score: Int(mid.rounded())), lines: lines)
     }
 
     @objc private func exportReport() {
         let p = NSSavePanel()
         let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
-        let body = text.string
-        p.begin { r in
+        // 畳んだままでも書き出せるように、ここで組み立てる
+        let body = text.string.isEmpty
+            ? log.report(samples: detailSamples, title: reportTitle, alreadyFiltered: true)
+            : text.string
+        guard let window else { return }
+        p.beginSheetModal(for: window) { r in
             guard r == .OK, let url = p.url else { return }
-            try? body.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try body.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                // 黙って消えると、渡したつもりのファイルが無い状態になる
+                let a = NSAlert()
+                a.messageText = "書き出せませんでした"
+                a.informativeText = error.localizedDescription
+                a.beginSheetModal(for: window)
+            }
         }
     }
 }

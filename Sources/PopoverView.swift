@@ -409,24 +409,9 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 14)
 
-            // 打つ手があるときだけボタンを出す。説明はリード文に集約済み。
-            if snap.primary == .none {
-                HStack(spacing: 6) {
-                    Image(systemName: snap.level == .good ? "checkmark.seal.fill" : "info.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(snap.level == .good ? Level.good.textTint : Color.secondary)
-                    Text(snap.level == .good ? "いま対処は必要ありません"
-                         : snap.level == .offline ? "測定しています…"
-                         : "パソコン側でできることはありません")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .frame(height: 18)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-            } else {
+            // 打つ手があるときだけボタンを出す。
+            // 手が無いときに「できることはありません」と書いても、読む人は何も得ない。
+            if snap.primary != .none {
                 VStack(spacing: 6) {
                     Button(action: { app.runPrimary() }) {
                         HStack(spacing: 7) {
@@ -676,6 +661,72 @@ struct SubPage<Content: View>: View {
     }
 }
 
+/// 詳細系のページで共通に使う行。
+/// ページごとに作りを変えると、同じ「詳細」なのに見え方が違って読み替えが要る。
+/// 見出し・行・区切りをここに集約して、構造を必ず揃える。
+struct InfoRow: View {
+    let label: String
+    let value: String
+    var note: String?
+    var warn = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(warn ? Level.fair.textTint : Color.primary)
+                    .multilineTextAlignment(.trailing)
+            }
+            if let note {
+                Text(note)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+    }
+}
+
+struct InfoHeader: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct InfoLink: View {
+    let title: String
+    var icon: String = "chevron.right"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: 11.5))
+                Spacer()
+                Image(systemName: icon).font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+    }
+}
+
 struct DetailView: View {
     @ObservedObject var app: AppState
 
@@ -683,42 +734,15 @@ struct DetailView: View {
         SubPage(title: "詳細", back: { app.page = .home }) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(app.snap.details) { row in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(row.label)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(row.value)
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(row.warn ? Color.orange : Color.primary)
-                        }
-                        if let n = row.note {
-                            Text(n).font(.system(size: 9.5)).foregroundStyle(.tertiary)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 7)
+                    InfoRow(label: row.label, value: row.value, note: row.note, warn: row.warn)
                     Divider().opacity(0.4)
                 }
 
-                Button(action: { app.reloadNamedAPs(); app.page = .naming }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "pencil.circle").font(.system(size: 11))
-                        Text(app.snap.apNamed ? "この機器の呼び名を変える" : "この機器に呼び名を付ける")
-                            .font(.system(size: 11.5))
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
+                InfoLink(title: app.snap.apNamed
+                         ? "この機器の呼び名を変える" : "この機器に呼び名を付ける") {
+                    app.reloadNamedAPs(); app.page = .naming
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-
-                Divider().padding(.top, 10)
+                Divider().opacity(0.4)
 
                 // この回線で何ができるか
                 VStack(alignment: .leading, spacing: 6) {
@@ -1004,8 +1028,8 @@ struct NamingView: View {
 }
 
 /// このMacの負荷。
-/// 「逼迫しています」とだけ言われても手の打ちようがないので、
-/// 何がどれだけ使っているかと、何をすれば改善するかまで出す。
+/// 「詳細」と同じ行構造にそろえている。同じ性格の画面で作りが違うと、
+/// 読むたびに見方を切り替えることになる。
 struct MacView: View {
     @ObservedObject var app: AppState
 
@@ -1013,47 +1037,42 @@ struct MacView: View {
         let l = app.load
         return SubPage(title: "このMac", back: { app.page = .home }) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 0) {
 
-                    Gauge2(label: "CPU",
-                           value: l.cpuGauge,
-                           text: String(format: "%.0f%%", l.cpuPercent),
-                           note: String(format: "実行待ち コアあたり %.1f", l.loadPerCore),
-                           level: l.cpuPercent >= 85 ? .bad : (l.cpuPercent >= 70 ? .fair : .good))
+                    InfoRow(label: "CPU",
+                            value: String(format: "%.0f%%", l.cpuPercent),
+                            note: String(format: "実行待ち コアあたり %.1f。"
+                                         + "実行待ちはメモリ待ちでも上がるため、CPUの判断には使いません",
+                                         l.loadPerCore),
+                            warn: l.cpuBusy)
+                    Divider().opacity(0.4)
 
-                    Gauge2(label: "メモリ",
-                           value: l.memoryGauge,
-                           text: l.memoryWord,
-                           note: String(format: "空き %.0fMB / 圧縮 %.0fMB / スワップ %.1fGB",
-                                        l.freeMemoryMB, l.compressedMB, l.swapUsedMB / 1024),
-                           level: l.memoryPressureLevel >= 4 ? .bad
-                                : (l.memoryTight ? .fair : .good))
+                    InfoRow(label: "メモリ",
+                            value: l.memoryWord,
+                            note: String(format: "空き %.0fMB / 圧縮 %.0fMB / スワップ %.1fGB",
+                                         l.freeMemoryMB, l.compressedMB, l.swapUsedMB / 1024),
+                            warn: l.memoryTight)
+                    Divider().opacity(0.4)
 
                     if l.swapInMBps >= 0.5 || l.swapOutMBps >= 0.5 {
-                        HStack {
-                            Text("スワップの出入り").font(.system(size: 11))
-                            Spacer()
-                            Text(String(format: "読み %.0f / 書き %.0f MB秒",
-                                        l.swapInMBps, l.swapOutMBps))
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(l.swapOutMBps >= 1 ? Level.fair.textTint
-                                                                    : Color.primary)
-                        }
+                        InfoRow(label: "スワップの出入り",
+                                value: String(format: "読み %.0f / 書き %.0f MB秒",
+                                              l.swapInMBps, l.swapOutMBps),
+                                note: "書き出しが続いているときだけメモリの取り合いが起きています",
+                                warn: l.swapOutMBps >= 1)
+                        Divider().opacity(0.4)
                     }
 
-                    HStack {
-                        Text("このMacの通信量").font(.system(size: 11))
-                        Spacer()
-                        Text(String(format: "%.1f Mbps", app.ownMbps))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(app.ownMbps >= 8 ? Level.fair.textTint : Color.primary)
-                    }
+                    InfoRow(label: "このMacの通信量",
+                            value: String(format: "%.1f Mbps", app.ownMbps),
+                            note: "自分が流している量。多いと回線が詰まります",
+                            warn: app.ownMbps >= 8)
+                    Divider().opacity(0.4)
 
-                    // 改善案。これがないと状態を知っても何もできない。
+                    // 改善案。状態を知っても手が分からなければ意味がない。
                     let tips = app.macSuggestions
                     if !tips.isEmpty {
-                        Divider()
-                        Text("改善するには").font(.system(size: 11, weight: .semibold))
+                        InfoHeader(text: "改善するには")
                         ForEach(Array(tips.enumerated()), id: \.offset) { _, t in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "arrow.right.circle.fill")
@@ -1065,107 +1084,60 @@ struct MacView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 0)
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 4)
                         }
+                        Divider().opacity(0.4).padding(.top, 6)
                     } else {
-                        Text("いまのところ余裕があります。回線が遅く感じる場合、"
-                             + "原因はMac側ではありません。")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        InfoRow(label: "総合",
+                                value: "余裕あり",
+                                note: "回線が遅く感じる場合、原因はMac側ではありません")
+                        Divider().opacity(0.4)
                     }
 
                     if !app.topTalkers.isEmpty {
-                        Divider()
-                        UsageList(title: "通信しているアプリ",
-                                  rows: app.topTalkers.map {
-                                      ($0.name, String(format: "%.0f Mbps", $0.mbps)) })
+                        InfoHeader(text: "通信しているアプリ")
+                        ForEach(Array(app.topTalkers.enumerated()), id: \.offset) { _, t in
+                            InfoRow(label: t.name, value: String(format: "%.0f Mbps", t.mbps))
+                        }
+                        Divider().opacity(0.4)
                     }
 
-                    Divider()
-                    UsageList(title: "CPUを使っているアプリ",
-                              rows: l.topCPU.map { ($0.name, String(format: "%.0f%%", $0.cpu)) },
-                              empty: "計測中です")
+                    InfoHeader(text: "CPUを使っているアプリ")
+                    if l.topCPU.isEmpty {
+                        InfoRow(label: "計測中です", value: "")
+                    } else {
+                        ForEach(l.topCPU) { p in
+                            InfoRow(label: p.name, value: String(format: "%.0f%%", p.cpu))
+                        }
+                    }
+                    Divider().opacity(0.4)
 
-                    Divider()
-                    UsageList(title: "メモリを使っているアプリ",
-                              rows: l.topMemory.map {
-                                  ($0.name, $0.memMB >= 1024
-                                      ? String(format: "%.1f GB", $0.memMB / 1024)
-                                      : String(format: "%.0f MB", $0.memMB)) },
-                              empty: "計測中です")
+                    InfoHeader(text: "メモリを使っているアプリ")
+                    if l.topMemory.isEmpty {
+                        InfoRow(label: "計測中です", value: "")
+                    } else {
+                        ForEach(l.topMemory) { p in
+                            InfoRow(label: p.name,
+                                    value: p.memMB >= 1024
+                                        ? String(format: "%.1f GB", p.memMB / 1024)
+                                        : String(format: "%.0f MB", p.memMB))
+                        }
+                    }
+                    Divider().opacity(0.4)
 
-                    Divider()
                     Text("スワップの使用量が多くても、それだけでは問題ではありません。"
                          + "macOSは空きメモリを遊ばせず、圧縮とスワップを積極的に使う設計です。"
-                         + "実際に効くのはメモリ圧のレベルと、スワップへの書き出しが"
-                         + "続いているかどうかです。")
+                         + "実際に効くのはメモリ圧のレベルと、スワップへの書き出しが続いているか"
+                         + "どうかです。ヘルパープロセスは親アプリにまとめて数えています。")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    Text("ヘルパープロセスは親アプリにまとめて数えています。")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
                 }
-                .padding(14)
             }
             .frame(maxHeight: 440)
-        }
-    }
-}
-
-private struct Gauge2: View {
-    let label: String
-    let value: Double
-    let text: String
-    let note: String
-    let level: Level
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(label).font(.system(size: 11, weight: .medium))
-                Spacer()
-                Text(text)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(level == .good ? Color.primary : level.textTint)
-            }
-            // 長さと色は必ず同じ値から出す。別々にすると
-            // 「45%なのに赤」のような矛盾が起きる。
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.09))
-                    Capsule()
-                        .fill(level.tint)
-                        .frame(width: max(3, geo.size.width * value))
-                }
-            }
-            .frame(height: 8)
-            Text(note).font(.system(size: 9)).foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct UsageList: View {
-    let title: String
-    let rows: [(String, String)]
-    var empty: String = "なし"
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 11, weight: .semibold))
-            if rows.isEmpty {
-                Text(empty).font(.system(size: 10)).foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
-                    HStack {
-                        Text(r.0).font(.system(size: 11)).lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(r.1).font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
         }
     }
 }

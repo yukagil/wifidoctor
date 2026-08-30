@@ -3,12 +3,32 @@ import Foundation
 /// 日付ごとの JSONL に追記していく。
 /// 「遅かった瞬間」は後から再現できないので、記録が切り分けの生命線になる。
 final class SampleLog {
-    static let dir: URL = {
+    /// 記録の置き場所。動作確認のときだけ差し替えられるようにしてある。
+    ///
+    /// ここが固定だったせいで、保持期間のテストが「昨日の日付のファイル」を
+    /// 作っては消す過程で、実際の記録を1日ぶん破壊した。
+    /// テストが本物のデータに触れられる構造そのものが誤りなので、入口で差し替える。
+    private(set) static var dir: URL = defaultDir()
+
+    private static func defaultDir() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WiFiDoctor", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base
-    }()
+    }
+
+    /// 動作確認用の空のフォルダへ切り替える。テストの最初に必ず呼ぶ。
+    @discardableResult
+    static func useTemporaryDirectory() -> URL {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("WiFiDoctorTest-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        dir = tmp
+        return tmp
+    }
+
+    /// 本物の置き場所を使っていないこと。壊す側のテストはこれを確かめてから動く。
+    static var isTemporary: Bool { dir != defaultDir() }
 
     private let enc: JSONEncoder = {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
@@ -119,11 +139,15 @@ final class SampleLog {
     }
 
     /// 情シスにそのまま渡せる形のテキストレポート。期間をまたいでも同じ形式で出す。
-    func report(samples rawSamples: [Sample], title: String, usableAPs: Int = -1) -> String {
+    /// `alreadyFiltered` は「呼び出し側で representative 済み」の意味。
+    /// 二重に掛けると、絞り込みで生まれた短い断片がさらに落ちて、
+    /// 画面に出ている分数と添付レポートの分数が食い違う。
+    func report(samples rawSamples: [Sample], title: String, usableAPs: Int = -1,
+                alreadyFiltered: Bool = false) -> String {
         let tf = DateFormatter(); tf.dateFormat = "M/d HH:mm"
         guard !rawSamples.isEmpty else { return "\(title) の記録はありません。" }
         // スリープ中に飛び飛びで残った記録は集計から外す
-        let samples = Sample.representative(rawSamples)
+        let samples = alreadyFiltered ? rawSamples : Sample.representative(rawSamples)
         let dropped = rawSamples.count - samples.count
         guard !samples.isEmpty else { return "\(title) の記録はありません。" }
 
@@ -138,38 +162,48 @@ final class SampleLog {
         let durations = Sample.durations(samples)
         var byVerdict: [String: TimeInterval] = [:]
         for (i, s) in samples.enumerated() { byVerdict[s.verdict, default: 0] += durations[i] }
-        out += "■ 状態別の時間\n"
+        out += "■ どんな状態だったか\n"
         for v in Verdict.allCases {
             guard let sec = byVerdict[v.rawValue], sec > 0 else { continue }
             let mins = Int((sec / 60).rounded())
-            let pad = v.rawValue.padding(toLength: 11, withPad: " ", startingAt: 0)
-            out += "  \(pad)\(String(format: "%4d", mins))分  (\(v.label))\n"
+            // 内部の名前をそのまま出さない。読む人には意味がない。
+            let pad = v.label.padding(toLength: 22, withPad: " ", startingAt: 0)
+            out += "  \(pad)\(String(format: "%4d", mins))分\n"
         }
 
-        out += String(format: "\n■ スコア  平均 %.0f / 最低 %.0f\n",
-                      Sample.averageScore(samples),
+        // 画面と同じ物差しで出す。件数平均だと、測る間隔が変わったときに
+        // 短い時間の点が過大に効いて、同じ記録なのに数字が食い違う。
+        let scorePairs = zip(samples, durations).map { (Double($0.0.score), $0.1) }
+        out += String(format: "\n■ 全体の点数  ふだん %.0f点 / 悪いとき %.0f点 / 最低 %.0f点\n",
+                      PlaceReport.quantile(scorePairs, 0.5) ?? 0,
+                      PlaceReport.quantile(scorePairs, 0.10) ?? 0,
                       samples.map { Double($0.score) }.min() ?? 0)
 
         // 悪化していた区間だけを塊にまとめて出す(全件出すと読めない)
-        out += "\n■ 問題が出ていた区間\n"
+        out += "\n■ 調子が悪かった時間帯\n"
         var runStart: Sample? = nil
+        var runWorst: Sample? = nil
         var prev: Sample? = nil
         var wrote = false
+        // 区間ごとに全件を filter すると、不調が細切れなほど遅くなる
+        // （＝調子の悪い環境ほど待たされる）。歩きながら最悪を持ち回る。
         func flush(_ end: Sample) {
             guard let st = runStart else { return }
-            let worst = samples.filter { $0.at >= st.at && $0.at <= end.at }.min { $0.score < $1.score } ?? st
+            let worst = runWorst ?? st
             out += String(format: "  %@-%@  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms\n",
                           tf.string(from: st.at), tf.string(from: end.at),
                           (Verdict(rawValue: st.verdict)?.label ?? st.verdict),
                           worst.score, worst.rssi, worst.channel, worst.txRate, worst.gwRTT ?? -1)
             wrote = true
             runStart = nil
+            runWorst = nil
         }
         for s in samples {
             let bad = Verdict(rawValue: s.verdict)?.isProblem ?? false
             if bad {
-                if runStart == nil { runStart = s }
-                else if let p = prev, s.verdict != p.verdict { flush(p); runStart = s }
+                if runStart == nil { runStart = s; runWorst = s }
+                else if let p = prev, s.verdict != p.verdict { flush(p); runStart = s; runWorst = s }
+                if s.score < (runWorst?.score ?? Int.max) { runWorst = s }
             } else if let p = prev, runStart != nil {
                 flush(p)
             }
@@ -187,51 +221,35 @@ final class SampleLog {
     }
 
     /// 場所（AP）ごとの実績。呼び名を付けてあれば場所名で出る。
+    /// 集計は画面の比較表と同じものを使う。別々に書くと、同じ記録から
+    /// 別の点数が出て、どちらを信じればいいのか説明できなくなる。
     private func placeSection(samples: [Sample], durations: [TimeInterval]) -> String {
         var out = "\n■ 場所別の実績\n"
+        let places = PlaceReport.summaries(samples, by: .ap, durations: durations)
 
-        struct Agg {
-            var seconds: TimeInterval = 0
-            var scoreSum = 0
-            var count = 0
-            var rssiSum = 0
-            var byHour: [Int: (sum: Int, n: Int)] = [:]
-        }
-        var agg: [String: Agg] = [:]
-        let cal = Calendar.current
-        for (i, s) in samples.enumerated() {
-            guard let b = s.bssid else { continue }
-            var a = agg[b] ?? Agg()
-            a.seconds += durations[i]
-            a.scoreSum += s.score
-            a.rssiSum += s.rssi
-            a.count += 1
-            let h = cal.component(.hour, from: s.at)
-            var e = a.byHour[h] ?? (0, 0)
-            e.sum += s.score; e.n += 1
-            a.byHour[h] = e
-            agg[b] = a
-        }
-
-        guard !agg.isEmpty else {
+        guard !places.isEmpty else {
             out += "  位置情報の許可が無いため、どのAPに接続していたかを記録できていません。\n"
             out += "  システム設定 > プライバシーとセキュリティ > 位置情報サービス で許可すると記録できます。\n"
             return out
         }
 
-        for (b, a) in agg.sorted(by: { $0.value.seconds > $1.value.seconds }) {
-            let name = APNames.name(for: b) ?? "AP \(APNames.shortID(b))"
-            let avg = a.scoreSum / max(1, a.count)
-            out += String(format: "  %@\n", name)
-            out += String(format: "    平均 %d点 / %d分 / 平均RSSI %ddBm / %@\n",
-                          avg, Int(a.seconds / 60), a.rssiSum / max(1, a.count), b)
-            // 十分な標本がある時間帯だけ、最も悪かった時間を出す
-            let worst = a.byHour.filter { $0.value.n >= 12 }
-                .min { ($0.value.sum / $0.value.n) < ($1.value.sum / $1.value.n) ? true : false }
-            if let w = worst, a.byHour.count > 1 {
-                out += String(format: "    最も悪い時間帯 %d時台（平均 %d点）\n",
-                              w.key, w.value.sum / w.value.n)
+        for p in places {
+            out += "  \(p.name)\n"
+            guard p.enough else {
+                out += "    \(Int(p.seconds))秒だけ（判定できるほどの記録がありません） / \(p.key)\n"
+                continue
             }
+            out += String(format: "    ふだん %d点 / 悪いとき %d点 / %d分 / 電波 %ddBm / %@\n",
+                          Int(p.score.mid ?? 0), Int(p.score.bad ?? 0),
+                          p.minutes, p.rssi ?? 0, p.key)
+            out += String(format: "    応答 %d→%dms / ゆらぎ %d→%dms / とりこぼし %.1f%%\n",
+                          Int(p.rtt.mid ?? 0), Int(p.rtt.bad ?? 0),
+                          Int(p.jitter.mid ?? 0), Int(p.jitter.bad ?? 0),
+                          (p.lossRatio ?? 0) * 100)
+            if p.badSeconds > 0 {
+                out += "    \(p.detail)\n"
+            }
+            if !p.hourWord.isEmpty { out += "    つないでいた時間帯 \(p.hourWord)\n" }
         }
         if APNames.all().isEmpty {
             out += "  ※ アプリの［詳細］からAPに呼び名を付けると、ここに会議室名が出ます。\n"

@@ -18,6 +18,9 @@ enum SelfTest {
 
     static func run() -> Int {
         failures = []; checks = 0
+        // 本物の記録に触れさせない。ここを忘れると、保持期間のテストが
+        // 実際のログを消す（一度やった）。
+        SampleLog.useTemporaryDirectory()
         testPingParse()
         testVerdict()
         testScoreBounds()
@@ -34,6 +37,9 @@ enum SelfTest {
         testDurations()
         testAPNames()
         testPlaceAwareness()
+        testHourReport()
+        testPlaceReport()
+        testVocabulary()
         testScoreVerdictAgreement()
         testDownsample()
         testRetention()
@@ -564,14 +570,20 @@ enum SelfTest {
         mixed += [sample(40, score: 92, verdict: .ok)]
         mixed += (0...2).map { sample(100 + $0 * 5, score: 10, verdict: .weak, bssid: nil) }
         let r = log.report(samples: mixed, title: "混在")
-        expect(r.contains("CONGESTED"), "問題の種別が出る")
-        expect(r.contains("問題が出ていた区間"), "区間の見出しが出る")
+        expect(r.contains("APが混雑"), "問題の種別が普段の言葉で出る")
+        expect(r.contains("調子が悪かった時間帯"), "区間の見出しが出る")
         expect(!r.contains("nan") && !r.contains("inf"), "数値が壊れていない")
+
+        // 内部の名前（OK / CONGESTED など）を人が読む文書に出さないこと
+        for v in Verdict.allCases {
+            expect(!r.contains(v.rawValue),
+                   "レポートに内部名が出ている: \(v.rawValue)")
+        }
 
         // BSSIDが1件も無い記録でも落ちない
         // 原因が偏っていれば、AP側でできる対処を申し送りに出すこと
         let sticky = (0..<40).map { sample($0 * 5, score: 30, verdict: .sticky) }
-        let r3 = SampleLog().report(samples: sticky, title: "sticky多発")
+        let r3 = SampleLog().report(samples: sticky, title: "遠いAP多発")
         expect(r3.contains("情シスへの申し送り"), "偏った原因があれば申し送りを出す")
         expect(r3.contains("802.11") || r3.contains("最小RSSI"), "AP側の具体策を示す")
 
@@ -607,6 +619,11 @@ enum SelfTest {
 
     /// 古い記録が消え、新しい記録と関係ないファイルが残ること。
     private static func testRetention() {
+        // ファイルを作って消すテストなので、置き場所が本物でないことを必ず確かめる
+        guard SampleLog.isTemporary else {
+            expect(false, "本物の記録フォルダに対して保持期間のテストを走らせようとした")
+            return
+        }
         let fm = FileManager.default
         let log = SampleLog()
         let cal = Calendar.current
@@ -776,7 +793,7 @@ enum SelfTest {
         run.append(sample(144, score: 95, verdict: .ok))
         let r = SampleLog().report(samples: run, title: "間隔変更")
         // 12秒間隔×12件 = 144秒 = 2分。件数×5秒の旧方式だと1分になってしまう。
-        let line = r.split(separator: "\n").first { $0.contains("CONGESTED") }.map(String.init) ?? ""
+        let line = r.split(separator: "\n").first { $0.contains("APが混雑") }.map(String.init) ?? ""
         expect(line.contains("2分"), "可変間隔でも実時間で集計する（得られた行: \(line)）")
     }
 
@@ -886,6 +903,170 @@ enum SelfTest {
         expect(r.contains("場所別の実績"), "場所別の見出しが出る")
         expect(r.contains("13F 執務室"), "呼び名が場所別に出る")
         APNames.set("", for: bssid)
+    }
+
+    // MARK: - 時間ごとのまとめ
+
+    /// 「今日は遅かった」ではなく「何時が遅かった」を出す部分。
+    /// ここが狂うと、悪くない時間帯を悪者にした案内を出してしまう。
+    private static func testHourReport() {
+        // 基準時刻は 09:00(JST)。10時台=不調40分、11時台=良好40分、12時台=不調5分。
+        var ss: [Sample] = []
+        for i in 0..<480 { ss.append(sample(3600 + i * 5, score: 50, verdict: .congested)) }
+        for i in 0..<480 { ss.append(sample(7200 + i * 5, score: 95)) }
+        for i in 0..<60  { ss.append(sample(10800 + i * 5, score: 10, verdict: .weak)) }
+
+        let hours = HourReport.hours(ss)
+        eq(hours.count, 24, "記録が無い時間帯も含めて24個返す")
+        eq(hours.map { $0.hour }, Array(0..<24), "0時から順に並ぶ")
+
+        eq(hours[10].score, 50, "10時台のふだんの点数")
+        expect(hours[10].level == .bad, "50点は不調")
+        expect(hours[10].topProblem == .congested, "10時台の主因は混雑")
+        expect(hours[10].badRatio > 0.99, "10時台はほぼ崩れていた")
+        expect(hours[10].minutes >= 39, "10時台の長さ: \(hours[10].minutes)分")
+
+        eq(hours[11].score, 95, "11時台のふだんの点数")
+        expect(hours[11].level == .good, "95点は良好")
+        expect(hours[11].badRatio == 0, "11時台は崩れていない")
+        expect(hours[11].topProblem == nil, "問題が無ければ主因も無い")
+
+        expect(hours[0].seconds == 0 && !hours[0].hasData, "記録が無い時間帯は空")
+        expect(hours[12].hasData, "5分でも記録として扱う")
+
+        // 5分しか記録の無い12時台は、点が低くても「今日いちばん悪かった」にしない
+        eq(HourReport.worst(hours)?.hour, 10, "短い時間帯を最悪扱いしない")
+        expect(HourReport.worst(HourReport.hours([])) == nil, "記録が無ければ最悪の時間帯も無い")
+        // 期間が延びれば必要な記録も延びる。7日で「1日あたり6分」を最悪と呼ばない
+        expect(HourReport.worst(hours, days: 7) == nil, "複数日では足切りも日数ぶん延びる")
+
+        // つながっていなかった時間を「0点の不調」として描かない
+        var withOffline = ss
+        for i in 0..<120 {
+            var x = sample(14400 + i * 5, score: 0, verdict: .offline)
+            x.associated = false
+            withOffline.append(x)
+        }
+        let h2 = HourReport.hours(withOffline)
+        expect(h2[13].seconds == 0, "未接続の時間は調子の集計に入らない: \(h2[13].seconds)秒")
+
+        // ふだんの点数は中央値。終盤の短い落ち込みで全体が引きずられない
+        var tail: [Sample] = []
+        for i in 0..<540 { tail.append(sample(3600 + i * 5, score: 90)) }
+        for i in 0..<60  { tail.append(sample(6300 + i * 5, score: 10, verdict: .weak)) }
+        let th = HourReport.hours(tail)
+        eq(th[10].score, 90, "裾に引きずられず、ふだんの点数を保つ")
+        expect(th[10].badRatio > 0.05 && th[10].badRatio < 0.2,
+               "崩れた割合は別に持つ: \(th[10].badRatio)")
+    }
+
+    // MARK: - 場所ごとのまとめ
+
+    /// 比較表の数字。ここが狂うと「どこへ座るか」の判断を直接誤らせる。
+    private static func testPlaceReport() {
+        // A: ふだん90点だが、最後の5分だけ崩れる。B: ずっと70点。
+        var ss: [Sample] = []
+        for i in 0..<540 {
+            var x = sample(3600 + i * 5, score: 90, bssid: "aa:bb:cc:dd:ee:01")
+            x.gwRTT = 10; x.gwJitter = 5; x.gwLoss = 0; x.ssid = "net-a"
+            ss.append(x)
+        }
+        for i in 0..<60 {
+            var x = sample(6300 + i * 5, score: 20, verdict: .weak, bssid: "aa:bb:cc:dd:ee:01")
+            x.gwRTT = 200; x.gwJitter = 90; x.gwLoss = 40; x.ssid = "net-a"
+            ss.append(x)
+        }
+        for i in 0..<600 {
+            var x = sample(10800 + i * 5, score: 70, verdict: .congested,
+                           bssid: "aa:bb:cc:dd:ee:02")
+            x.gwRTT = 30; x.gwJitter = 15; x.gwLoss = 0; x.ssid = "net-b"
+            ss.append(x)
+        }
+
+        let ps = PlaceReport.summaries(ss)
+        eq(ps.count, 2, "AP ごとに1行")
+        guard let a = ps.first(where: { $0.key == "aa:bb:cc:dd:ee:01" }),
+              let b = ps.first(where: { $0.key == "aa:bb:cc:dd:ee:02" }) else {
+            expect(false, "APごとの行が見つからない"); return
+        }
+
+        // 「ふだん」と「悪いとき」を分けて持つ。平均ひとつでは両者を区別できない
+        eq(a.score.mid.map { Int($0) }, 90, "Aのふだんの点数")
+        expect((a.score.bad ?? 99) <= 20, "Aの悪いときの点数: \(a.score.bad ?? -1)")
+        eq(b.score.mid.map { Int($0) }, 70, "Bのふだんの点数")
+        expect((b.score.bad ?? 0) == 70, "Bは崩れないので裾も同じ")
+        expect(a.level == .good && b.level == .fair, "良し悪しはふだんの点数で決める")
+
+        // 300秒ぶんの不調＋最後の1件が代表する時間（上限は40秒）
+        expect(a.badSeconds >= 300 && a.badSeconds <= 340,
+               "崩れた時間: \(Int(a.badSeconds))秒")
+        expect(a.worstRun >= 280, "連続の最長も持つ: \(Int(a.worstRun))秒")
+        expect(a.topProblem == .weak, "Aの主因")
+
+        // 応答も裾を持つ。中央値だけだと「時々ひどい」場所を見落とす
+        eq(a.rtt.mid.map { Int($0) }, 10, "Aのふだんの応答")
+        expect((a.rtt.bad ?? 0) >= 100, "Aの悪いときの応答: \(a.rtt.bad ?? -1)")
+
+        // とりこぼしは「1回でも落ちた計測の割合」。損失率の中央値は常に0になる
+        expect((a.lossRatio ?? 0) > 0.08 && (a.lossRatio ?? 0) < 0.12,
+               "とりこぼしの割合: \(a.lossRatio ?? -1)")
+        eq(b.lossRatio, 0, "落ちていなければ0")
+
+        // 数分しか記録の無い行を「遅い」と断定しない
+        let brief = (0..<6).map { sample(20000 + $0 * 5, score: 0, verdict: .weak,
+                                         bssid: "aa:bb:cc:dd:ee:09") }
+        guard let short = PlaceReport.summaries(brief).first else {
+            expect(false, "短い行が出ない"); return
+        }
+        expect(!short.enough && short.level == .offline, "短い記録は判定しない")
+        expect(short.score.mid == nil && short.rtt.mid == nil, "数字も出さない")
+        expect(short.detail.contains("記録が短く"), "理由を書く: \(short.detail)")
+
+        // つながっていなかった時間を、その先の実績に足さない
+        var withOffline = ss
+        for i in 0..<120 {
+            var x = sample(14400 + i * 5, score: 0, verdict: .offline,
+                           bssid: "aa:bb:cc:dd:ee:01")
+            x.associated = false
+            withOffline.append(x)
+        }
+        guard let a2 = PlaceReport.summaries(withOffline)
+            .first(where: { $0.key == "aa:bb:cc:dd:ee:01" }) else {
+            expect(false, "行が見つからない"); return
+        }
+        expect(abs(a2.seconds - a.seconds) < 1,
+               "未接続の時間は加算しない: \(Int(a.seconds)) → \(Int(a2.seconds))")
+
+        // 接続先(SSID)でまとめ直せる
+        let byNet = PlaceReport.summaries(ss, by: .network)
+        eq(byNet.count, 2, "接続先ごとにも1行ずつ")
+        expect(byNet.contains { $0.name == "net-a" }, "SSIDが名前になる")
+
+        // 時間で重み付けした分位数
+        let q = [(10.0, 60.0), (100.0, 1.0)]
+        eq(PlaceReport.quantile(q, 0.5).map { Int($0) }, 10, "短い外れ値に中央値を動かされない")
+
+        // 「0分」と書かない
+        eq(PlaceReport.spanWord(45), "45秒", "1分未満は秒で")
+        eq(PlaceReport.spanWord(200), "3分20秒", "10分未満は秒まで")
+        eq(PlaceReport.spanWord(1800), "30分", "1時間未満は分で")
+        eq(PlaceReport.spanWord(5940), "1時間39分", "1時間を超えたら時間と分で")
+    }
+
+    // MARK: - 言葉づかい
+
+    /// 同じ語を別の意味で使い回すと、どこの話をしているのか読む人に分からなくなる。
+    private static func testVocabulary() {
+        // 「回線」は AP以降（ISP側）を指す語として既に使っている。
+        // 比較の単位（SSID）に流用してはいけない。
+        expect(Verdict.isp.label.contains("回線"), "「回線」はAP以降を指す語のまま")
+        expect(Verdict.isp.plainCause.contains("回線"), "普段の言葉でも同じ意味で使う")
+        for g in [PlaceGrouping.ap, PlaceGrouping.network] {
+            expect(!g.title.contains("回線") && !g.unitWord.contains("回線"),
+                   "比較の単位に「回線」を使わない: \(g.title)")
+        }
+        expect(PlaceGrouping.network.title.contains("接続先"),
+               "SSID は画面の他の場所と同じ「接続先」と呼ぶ")
     }
 
     // MARK: - 表示整形

@@ -16,6 +16,7 @@ enum UITest {
 
     static func run() -> Int {
         failures = []; checks = 0
+        SampleLog.useTemporaryDirectory()   // 本物の記録に触れさせない
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
 
@@ -338,13 +339,222 @@ enum UITest {
     private static func testHistoryWindow() {
         let log = SampleLog()
         let wc = HistoryWindowController(log: log)
-        _ = wc.window                     // 生成を強制する
+        guard let w = wc.window else { expect(false, "履歴ウィンドウを作れない"); return }
         wc.reload()                       // 実データが無くても落ちないこと
-        checks += 1
-        expect(wc.window != nil, "履歴ウィンドウを作れる")
-        expect(wc.window?.acceptsMouseMovedEvents == true,
-               "カーソル追従に必要なマウス移動イベントが有効")
-        wc.window?.close()
+        w.layoutIfNeeded()
+
+        expect(w.acceptsMouseMovedEvents, "カーソル追従に必要なマウス移動イベントが有効")
+
+        // 制約の組み方を誤ると幅が潰れて、文字が縦一列になる。
+        // 一度潰れると保存されて次回以降も潰れたままになるので、必ず押さえる。
+        expect(w.frame.width >= 680,
+               "ウィンドウ幅が潰れている: \(Int(w.frame.width))pt")
+        expect(w.frame.height >= 480,
+               "ウィンドウ高さが潰れている: \(Int(w.frame.height))pt")
+
+        let fitting = w.contentView?.fittingSize ?? .zero
+        expect(fitting.width >= 400,
+               "中身が必要とする幅が小さすぎる（制約の衝突が疑われる）: \(Int(fitting.width))pt")
+
+        // 記録を入れた状態でも潰れないこと
+        wc.reload()
+        w.layoutIfNeeded()
+        expect(w.frame.width >= 680, "再読み込み後に幅が潰れた: \(Int(w.frame.width))pt")
+
+        // 縦スタックの alignment やスクロールの中身の制約を間違えると、
+        // 幅ゼロのカードが並ぶ = 画面がまるごと空白になる。見た目では
+        // 「何も出ていない」としか分からないので、実寸で押さえる。
+        let two = twoPlaceDay()
+        wc.apply(two)
+        w.layoutIfNeeded()
+
+        let cards = find(CompareRow.self, in: w.contentView)
+        expect(cards.count == 2, "比較表の行が場所の数だけ並ぶ: \(cards.count)行")
+        for c in cards {
+            expect(c.frame.width >= 300, "カードの幅が潰れている: \(Int(c.frame.width))pt")
+            expect(c.frame.height >= 40, "カードの高さが潰れている: \(Int(c.frame.height))pt")
+            expect(c.frame.width <= w.frame.width, "カードが窓からはみ出している")
+        }
+
+        // 幅を揃える制約が無いと、文字が右端に寄って読めなくなる
+        let labels = find(NSTextField.self, in: w.contentView)
+            .filter { $0.stringValue.hasPrefix("つないでいた先") }
+        expect(labels.first.map { $0.frame.minX < 40 } ?? false,
+               "見出しが左端に置かれていない: \(labels.first.map { Int($0.frame.minX) } ?? -1)pt")
+
+        // 上段の時間ごとの帯。描画まで走らせて、潰れず・落ちないことを見る。
+        let strips = find(HourStripView.self, in: w.contentView)
+        expect(strips.count == 1, "時間ごとの帯が1つある: \(strips.count)")
+        if let strip = strips.first {
+            expect(strip.frame.width >= 300 && strip.frame.height >= 100,
+                   "時間ごとの帯が潰れている: \(NSStringFromSize(strip.frame.size))")
+            expect(strip.hours.count == 24, "24時間ぶんを受け取っている: \(strip.hours.count)")
+            expect(image(of: strip) != nil, "時間ごとの帯を描画できる")
+        }
+
+        // 上の帯と下の表が一体で動くこと。片方だけ変わると話が食い違う。
+        if let strip = strips.first {
+            strip.onSelectHour?(10)
+            w.layoutIfNeeded()
+            let picked = find(CompareRow.self, in: w.contentView)
+            expect(picked.count == 1, "時間を選ぶとその時間の先だけが並ぶ: \(picked.count)行")
+            expect(picked.first?.place.key == "aa:bb:cc:dd:ee:01",
+                   "10時台の行は10時台にいた先: \(picked.first?.place.key ?? "なし")")
+            expect(picked.first?.place.minutes ?? 0 <= 60, "その時間ぶんの数字になっている")
+            expect(find(NSTextField.self, in: w.contentView)
+                .contains { $0.stringValue.hasPrefix("10時台") }, "見出しが選んだ時間になる")
+
+            strip.onSelectHour?(nil)
+            w.layoutIfNeeded()
+            expect(find(CompareRow.self, in: w.contentView).count == 2, "選び直せば全体に戻る")
+
+            // 行を選ぶと、上の帯もその先だけになる
+            find(CompareRow.self, in: w.contentView).last?.onClick?()
+            w.layoutIfNeeded()
+            // 選んだ先以外の時間を消してはいけない。比べる相手がいなくなると、
+            // 選んだ先が良く見えるだけの画面になる（薄くするのが正しい）。
+            expect(strip.hours.filter { $0.hasData }.count == 2,
+                   "行を選んでも他の時間帯は残る: \(strip.hours.filter { $0.hasData }.count)時間")
+            expect(strip.selectedKey != nil, "帯が選択中の行を知っている")
+            expect(find(CompareRow.self, in: w.contentView).filter { $0.selected }.count == 1,
+                   "選んだ行だけが強調される")
+            expect(find(CompareRow.self, in: w.contentView).count == 2,
+                   "絞り込んでも比較のため他の行は残す")
+
+            // 同じものを指す数字が、上の結論と下の行で食い違わないこと。
+            // 集計の仕方（件数の平均か、時間で重みを付けるか）がずれると起きる。
+            if let card = find(VerdictCard.self, in: w.contentView).first,
+               let picked = find(CompareRow.self, in: w.contentView).first(where: { $0.selected }) {
+                let rowScore = picked.place.score.mid.map { Int($0.rounded()) }
+                expect(card.shownScore == rowScore,
+                       "結論の点数と選んだ行の点数が一致する: "
+                       + "\(card.shownScore.map(String.init) ?? "—") / "
+                       + "\(rowScore.map(String.init) ?? "—")")
+            } else {
+                expect(false, "結論と選択中の行が見つからない")
+            }
+
+            find(CompareRow.self, in: w.contentView).last?.onClick?()
+            w.layoutIfNeeded()
+            expect(strip.selectedKey == nil, "もう一度押せば解除される")
+        }
+
+        // 単位を切り替えると、回線(SSID)ごとの比較になる
+        if let seg = find(NSSegmentedControl.self, in: w.contentView).first {
+            seg.selectedSegment = 1
+            _ = seg.target?.perform(seg.action, with: seg)
+            w.layoutIfNeeded()
+            let names = find(CompareRow.self, in: w.contentView).map { $0.place.name }
+            expect(names.contains("net-b"), "回線ごとでは SSID が並ぶ: \(names)")
+            seg.selectedSegment = 0
+            _ = seg.target?.perform(seg.action, with: seg)
+            w.layoutIfNeeded()
+        }
+
+        // 記録が無くても描ける（初日はこの状態から始まる）
+        wc.apply([])
+        w.layoutIfNeeded()
+        expect(strips.first.map { image(of: $0) != nil } ?? false, "記録が無くても帯を描画できる")
+        wc.apply(two)
+        w.layoutIfNeeded()
+
+        // 列ごとに別の値が出ていること。見出しの文字列で振り分けていた頃は、
+        // 見出しを直した拍子に全列が同じ値（電波）になり、テストは素通りした。
+        if let row = find(CompareRow.self, in: w.contentView).first {
+            let vs = CompareRow.cells.map { CompareRow.value(row.place, $0.kind).mid }
+            expect(Set(vs.compactMap { $0 }).count == vs.count,
+                   "列ごとに違う値が出ている: \(vs.map { $0.map { String(format: "%.1f", $0) } ?? "—" })")
+            expect(CompareRow.value(row.place, .rtt).mid == row.place.rtt.mid, "応答の列は応答")
+            expect(CompareRow.value(row.place, .rssi).mid.map { Int($0) } == row.place.rssi,
+                   "電波の列は電波")
+        }
+
+        // 読み上げから見えること。手描きの view は放っておくと画面ごと空になる。
+        for v in find(VerdictCard.self, in: w.contentView) as [NSView]
+            + find(HourStripView.self, in: w.contentView)
+            + find(CompareRow.self, in: w.contentView) {
+            expect(v.isAccessibilityElement(), "読み上げの要素として名乗る: \(type(of: v))")
+            expect(!(v.accessibilityLabel() ?? "").isEmpty,
+                   "読み上げる文言がある: \(type(of: v))")
+        }
+
+        // 「詳しく見る」を開いたときのグラフとレポートも実寸で確かめる
+        if let toggle = find(NSButton.self, in: w.contentView)
+            .first(where: { $0.title.contains("詳しく見る") }) {
+            toggle.performClick(nil)
+            w.layoutIfNeeded()
+            let charts = find(ChartView.self, in: w.contentView)
+            expect(charts.first.map { !$0.isHiddenOrHasHiddenAncestor } ?? false,
+                   "詳細を開くとグラフが現れる")
+            expect(charts.first.map { $0.frame.width >= 300 } ?? false,
+                   "グラフの幅が潰れている: \(charts.first.map { Int($0.frame.width) } ?? -1)pt")
+
+            // 詳細を開いた瞬間に窓が画面より高くなると、下が欠けたまま縮められなくなる。
+            // 13インチの作業領域（約900pt）に収まることを実寸で押さえる。
+            let need = w.contentView?.fittingSize ?? .zero
+            expect(need.height <= 900,
+                   "詳細を開くと窓が画面に収まらない: \(Int(need.height))pt")
+            toggle.performClick(nil)
+            w.layoutIfNeeded()
+        } else {
+            expect(false, "詳細を開くボタンが見つからない")
+        }
+
+        // 現実の量で開けること。1日1.7万件、30日で10万件を超える。
+        // 集計の書き方を誤ると二乗で効き、ここでしか露見しない。
+        var many: [Sample] = []
+        let base = Date(timeIntervalSince1970: 631_152_000)
+        for i in 0..<100_000 {
+            var x = samples(1)[0]
+            x.at = base.addingTimeInterval(Double(i) * 5)
+            x.bssid = i % 3 == 0 ? "aa:bb:cc:dd:ee:01" : "aa:bb:cc:dd:ee:02"
+            x.score = i % 5 == 0 ? 40 : 90
+            x.verdict = (i % 5 == 0 ? Verdict.congested : .ok).rawValue
+            many.append(x)
+        }
+        let t0 = Date()
+        wc.apply(many)
+        w.layoutIfNeeded()
+        let took = Date().timeIntervalSince(t0)
+        expect(took < 2.0, String(format: "10万件の描き直しに %.1f秒かかっている", took))
+        print(String(format: "  10万件の描き直し: %.2f秒", took))
+
+        w.close()
+    }
+
+    /// 10時台と14時台に別々の先へつないだ1日。時間と場所の対応を確かめる素材。
+    private static func twoPlaceDay() -> [Sample] {
+        let base = Date(timeIntervalSince1970: 631_152_000)   // 09:00 JST
+        var out: [Sample] = []
+        for (offset, bssid, ssid, score) in [(3600.0, "aa:bb:cc:dd:ee:01", "net-a", 55),
+                                             (18000.0, "aa:bb:cc:dd:ee:02", "net-b", 92)] {
+            for i in 0..<600 {
+                var s = samples(1)[0]
+                s.at = base.addingTimeInterval(offset + Double(i) * 5)
+                s.bssid = bssid; s.ssid = ssid
+                s.score = score
+                s.verdict = (score < 60 ? Verdict.congested : .ok).rawValue
+                out.append(s)
+            }
+        }
+        return out
+    }
+
+    /// 実際に描かせてみる。sizeThatFits だけでは draw(_:) の中は走らない。
+    private static func image(of v: NSView) -> NSBitmapImageRep? {
+        guard v.bounds.width > 1, v.bounds.height > 1,
+              let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return nil }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        return rep
+    }
+
+    /// 実寸を確かめたいので、種類で view を集める。
+    private static func find<T: NSView>(_ type: T.Type, in root: NSView?) -> [T] {
+        guard let root else { return [] }
+        var out: [T] = []
+        if let v = root as? T { out.append(v) }
+        for s in root.subviews { out.append(contentsOf: find(type, in: s)) }
+        return out
     }
 
     // MARK: - SwiftUI の実描画
