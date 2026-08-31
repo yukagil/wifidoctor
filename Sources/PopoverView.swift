@@ -816,7 +816,7 @@ struct DetailView: View {
 
                 VStack(spacing: 7) {
                     Button(action: { app.exportReport() }) {
-                        Label("レポートを書き出す", systemImage: "square.and.arrow.up")
+                        Label("今日のレポートを書き出す", systemImage: "square.and.arrow.up")
                             .font(.system(size: 12))
                             .frame(maxWidth: .infinity)
                     }

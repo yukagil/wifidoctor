@@ -644,12 +644,20 @@ final class AppState: ObservableObject {
         let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
         let body = monitor.log.report(samples: monitor.log.load(date: Date()),
-                                      title: "今日",
+                                      title: "今日",   // 他の日は履歴ウィンドウの期間から
                                       usableAPs: monitor.scanner.usablePhysicalAPs())
         NSApp.activate(ignoringOtherApps: true)
         p.begin { r in
             guard r == .OK, let url = p.url else { return }
-            try? body.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try body.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                // 黙って消えると、渡したつもりのファイルが無い状態になる
+                let a = NSAlert()
+                a.messageText = "書き出せませんでした"
+                a.informativeText = error.localizedDescription
+                a.runModal()
+            }
         }
     }
 }
