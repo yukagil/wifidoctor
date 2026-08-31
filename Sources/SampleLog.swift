@@ -23,6 +23,13 @@ final class SampleLog {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("WiFiDoctorTest-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        // 前回までの残骸を片付ける。テストのたびに溜まっていく。
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+        if let old = try? FileManager.default.contentsOfDirectory(atPath: base.path) {
+            for n in old where n.hasPrefix("WiFiDoctorTest-") && n != tmp.lastPathComponent {
+                try? FileManager.default.removeItem(at: base.appendingPathComponent(n))
+            }
+        }
         dir = tmp
         return tmp
     }
@@ -38,9 +45,23 @@ final class SampleLog {
     }()
     private let q = DispatchQueue(label: "wifidoctor.log")
 
+    /// 日付の読み書きに使う書式。
+    ///
+    /// 利用者の暦法設定（和暦・仏暦など）を引き継ぐと、ファイル名が
+    /// `0008-08-31.jsonl` のように変わる。同じ設定のままなら往復するが、
+    /// 暦を切り替えた瞬間に古い名前が別の年として解釈され、
+    /// 保持期間の削除が全部消す／一件も消さない のどちらかに振れる。
+    static func dayFormatter() -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = .current          // 「その日」は利用者の時間帯で切る
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }
+
     static func fileURL(for date: Date) -> URL {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        return dir.appendingPathComponent("\(f.string(from: date)).jsonl")
+        dir.appendingPathComponent("\(dayFormatter().string(from: date)).jsonl")
     }
 
     func append(_ s: Sample) {
@@ -53,17 +74,24 @@ final class SampleLog {
                 _ = try? h.seekToEnd()
                 try? h.write(contentsOf: data)
             } else {
-                try? data.write(to: url)
+                // 既存ファイルがあるのにここへ来た場合、上書きすればその日が消える。
+                // 新規作成のときだけ書く。
+                try? data.write(to: url, options: .withoutOverwriting)
             }
         }
     }
 
     func load(date: Date) -> [Sample] {
-        let url = SampleLog.fileURL(for: date)
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").compactMap {
-            guard let d = $0.data(using: .utf8) else { return nil }
-            return try? dec.decode(Sample.self, from: d)
+        guard let data = try? Data(contentsOf: SampleLog.fileURL(for: date)) else { return [] }
+        return decodeLines(data)
+    }
+
+    /// 行ごとに解く。ファイル全体を1つの文字列にすると、
+    /// 追記中に落ちて壊れたバイトが1つ混じっただけで、その日の記録が丸ごと
+    /// 読めなくなる（ファイルは残っているのに画面は「記録なし」になる）。
+    private func decodeLines(_ data: Data) -> [Sample] {
+        data.split(separator: 0x0A, omittingEmptySubsequences: true).compactMap {
+            try? dec.decode(Sample.self, from: Data($0))
         }
     }
 
@@ -77,12 +105,13 @@ final class SampleLog {
         guard size > offset else { return [] }
         try? h.seek(toOffset: offset)
         guard let data = try? h.readToEnd(), !data.isEmpty else { return [] }
-        offset = size
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").compactMap {
-            guard let d = $0.data(using: .utf8) else { return nil }
-            return try? dec.decode(Sample.self, from: d)
+        // 読んだ量で進める。size で進めると、読んでいる間の追記を飛ばしたことになる。
+        // さらに最後の改行までに留めて、書きかけの行を次回もう一度読み直す。
+        if let lastLF = data.lastIndex(of: 0x0A) {
+            offset += UInt64(data.distance(from: data.startIndex, to: lastLF)) + 1
+            return decodeLines(data[data.startIndex...lastLF])
         }
+        return []
     }
 
     /// 記録は1日あたり約5MB増える。放置すると年1.7GBになるので古いものを消す。
@@ -91,9 +120,12 @@ final class SampleLog {
     func pruneOldLogs() {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: SampleLog.dir.path) else { return }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        let cutoff = Calendar.current.date(byAdding: .day,
-                                           value: -SampleLog.retentionDays, to: Date()) ?? Date()
+        let f = SampleLog.dayFormatter()
+        // 「30日分を残す」なので、切り口も日の始まりに揃える
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        let today = cal.startOfDay(for: Date())
+        let cutoff = cal.date(byAdding: .day, value: -SampleLog.retentionDays, to: today) ?? today
         for name in files where name.hasSuffix(".jsonl") {
             guard let d = f.date(from: String(name.dropLast(6))) else { continue }  // 日付形式でないものは残す
             if d < cutoff {
@@ -103,14 +135,41 @@ final class SampleLog {
         trimSpeedTests()
     }
 
+    static let speedLogURL: URL = dir.appendingPathComponent("speedtests.jsonl")
+
+    /// 速度テスト履歴の追記。切り詰めと同じキューで行う。
+    /// 別々に触ると、切り詰めがファイルを差し替えた隙に書いた1件が消える。
+    func appendSpeedTest(_ line: String) {
+        q.async {
+            let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
+            guard let data = (line + "\n").data(using: .utf8) else { return }
+            if let h = try? FileHandle(forWritingTo: url) {
+                defer { try? h.close() }
+                _ = try? h.seekToEnd()
+                try? h.write(contentsOf: data)
+            } else {
+                try? data.write(to: url, options: .withoutOverwriting)
+            }
+        }
+    }
+
+    func loadSpeedTests() -> [String] {
+        let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return data.split(separator: 0x0A).compactMap { String(data: Data($0), encoding: .utf8) }
+    }
+
     /// スピードテストの履歴も無制限には持たない。
     private func trimSpeedTests() {
-        let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        let lines = text.split(separator: "\n")
-        guard lines.count > 500 else { return }
-        let kept = lines.suffix(500).joined(separator: "\n") + "\n"
-        try? kept.write(to: url, atomically: true, encoding: .utf8)
+        q.sync {
+            let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
+            guard let data = try? Data(contentsOf: url) else { return }
+            let lines = data.split(separator: 0x0A)
+            guard lines.count > 500 else { return }
+            var kept = Data()
+            for l in lines.suffix(500) { kept.append(contentsOf: l); kept.append(0x0A) }
+            try? kept.write(to: url, options: .atomic)
+        }
     }
 
     /// 表示用に件数を落とす。単純な間引きだと短時間の悪化が消えてしまうので、
@@ -121,7 +180,10 @@ final class SampleLog {
         let span = max(1, last.timeIntervalSince(first))
         var buckets: [Int: Sample] = [:]
         for s in samples {
-            let i = min(maxCount - 1, max(0, Int(s.at.timeIntervalSince(first) / span * Double(maxCount))))
+            // Int へ落とす前に範囲へ収める。壊れたレコードで極端な日付が入ると、
+            // 変換の時点でトラップする（クランプが後だと間に合わない）。
+            let pos = s.at.timeIntervalSince(first) / span * Double(maxCount)
+            let i = Int(min(Double(maxCount - 1), max(0, pos)))
             if let e = buckets[i], e.score <= s.score { continue }
             buckets[i] = s
         }
@@ -134,7 +196,7 @@ final class SampleLog {
     }
 
     func report(date: Date) -> String {
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let df = SampleLog.dayFormatter()
         return report(samples: load(date: date), title: df.string(from: date))
     }
 
@@ -144,7 +206,7 @@ final class SampleLog {
     /// 画面に出ている分数と添付レポートの分数が食い違う。
     func report(samples rawSamples: [Sample], title: String, usableAPs: Int = -1,
                 alreadyFiltered: Bool = false) -> String {
-        let tf = DateFormatter(); tf.dateFormat = "M/d HH:mm"
+        let tf = SampleLog.dayFormatter(); tf.dateFormat = "M/d HH:mm"
         guard !rawSamples.isEmpty else { return "\(title) の記録はありません。" }
         // スリープ中に飛び飛びで残った記録は集計から外す
         let samples = alreadyFiltered ? rawSamples : Sample.representative(rawSamples)
@@ -152,7 +214,10 @@ final class SampleLog {
         guard !samples.isEmpty else { return "\(title) の記録はありません。" }
 
         var out = "Wi-Fi 診断レポート  \(title)\n"
-        out += "観測 \(samples.count) 件 / 記録フォルダ: \(SampleLog.dir.path)\n"
+        out += "観測 \(samples.count) 件\n"
+        // 渡す本人が判断できるように、何が入っているかを先に書く。
+        // 知らずに提出させるのが一番まずい。
+        out += "※ このレポートには、接続していたAP（BSSIDと呼び名）と時間帯が含まれます。\n\n"
         if dropped > 0 {
             out += "（スリープ中に飛び飛びで残った \(dropped) 件は集計から除外しています）\n"
         }
@@ -276,14 +341,19 @@ final class SampleLog {
             """)
         }
         if ratio(.congested) > 0.10 {
+            // ここで観測しているのは「電波は良いのに第一ホップの応答が遅い」だけ。
+            // 混雑・干渉のほかに、ルータが ICMP を後回しにしている、
+            // 端末の省電力で遅延が伸びている、といった説明も付く。
+            // 切り分けきれていないことを、増設の要求として書かない。
             var t = """
-              ・APの混雑が長い（観測時間の\(Int(ratio(.congested) * 100))%）
-                電波は届いているのに応答が遅い状態です。AP台数の増設、チャンネル設計の見直し、
-                同一チャンネルに重なるAPの削減が効きます。
+              ・電波は良好なのに、AP までの応答が遅い時間が長い（観測時間の\(Int(ratio(.congested) * 100))%）
+                端末から見えるのはここまでです。AP側の混雑・干渉のほか、
+                ルータの負荷や応答の優先度でも同じ見え方になります。
+                切り分けにはAP側のログ（同時接続数・チャンネル利用率）が必要です。
             """
             if usableAPs == 1 {
-                t += "\n    この場所は実用的なAPが1台しかありません。端末側では回避できないため、"
-                   + "増設をご検討ください。"
+                t += "\n    観測した時点では、この場所で実用的に使えるAPは1台でした。"
+                   + "端末側で別のAPへ逃げる余地はありません。"
             }
             items.append(t)
         }

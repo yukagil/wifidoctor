@@ -20,10 +20,23 @@ final class AppState: ObservableObject {
     @Published private(set) var speedAt: Date?
     @Published private(set) var speedHistory: [SpeedRecord] = []
 
-    @Published var notifyOn: Bool { didSet { monitor.notifier.enabled = notifyOn } }
+    @Published var notifyOn: Bool {
+        didSet {
+            monitor.notifier.enabled = notifyOn
+            Settings.store.set(notifyOn, forKey: "notifyOn")
+        }
+    }
+    /// ⌥⌘W で呼び出すかどうか。既定は切。全アプリの標準ショートカットを奪うため。
+    @Published var hotKeyOn: Bool {
+        didSet {
+            Settings.store.set(hotKeyOn, forKey: "hotKeyOn")
+            onHotKeyChange?()
+        }
+    }
+    var onHotKeyChange: (() -> Void)?
     @Published var compactBar: Bool {
         didSet {
-            UserDefaults.standard.set(compactBar, forKey: "compactBar")
+            Settings.store.set(compactBar, forKey: "compactBar")
             onCompactChange?()
         }
     }
@@ -52,7 +65,9 @@ final class AppState: ObservableObject {
     }
 
     func commitAPName() {
-        guard let b = monitor.linkForDisplay.bssid else { return }
+        // 入力を始めたときのAPに付ける。打っている間にローミングすると、
+        // 気づかないうちに別のAPへ名前が付いてしまう。
+        guard let b = apNameLoadedFor ?? monitor.linkForDisplay.bssid else { return }
         APNames.set(apNameDraft, for: b)
         reloadNamedAPs()
         refresh()
@@ -93,8 +108,10 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        self.notifyOn = true
-        self.compactBar = UserDefaults.standard.bool(forKey: "compactBar")
+        // 既定は入り。ただし一度切ったら覚える（切ったつもりが再起動で戻るのを防ぐ）
+        self.notifyOn = Settings.store.object(forKey: "notifyOn") as? Bool ?? true
+        self.hotKeyOn = Settings.store.bool(forKey: "hotKeyOn")
+        self.compactBar = Settings.store.bool(forKey: "compactBar")
         self.loginOn = LoginItem.isEnabled
         self.loginStatus = LoginItem.statusText
     }
@@ -120,6 +137,8 @@ final class AppState: ObservableObject {
         s.headline = Phrase.headline(m.verdict)
         s.usableAPs = m.scanner.usablePhysicalAPs()
         s.vpn = m.vpnInterface
+        s.locationDenied = m.locationDenied
+        s.measuring = m.verdict == .measuring
         s.macWarn = m.load.busy || m.ownMbps >= 8
         s.macLine = Phrase.macLine(load: m.load, ownMbps: m.ownMbps,
                                    topTalker: m.topTalkers.first?.name)
@@ -413,7 +432,7 @@ final class AppState: ObservableObject {
     }
 
     func reloadRecent() {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let f = SampleLog.dayFormatter()
         let today = f.string(from: Date())
 
         if today != tailDay || recent.isEmpty {
@@ -510,10 +529,8 @@ final class AppState: ObservableObject {
 
     /// 過去のスピードテスト結果。場所ごとの比較に使えるので履歴を残す。
     func reloadSpeedHistory() {
-        let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { speedHistory = []; return }
         let f = ISO8601DateFormatter()
-        speedHistory = text.split(separator: "\n").compactMap { line -> SpeedRecord? in
+        speedHistory = monitor.log.loadSpeedTests().compactMap { line -> SpeedRecord? in
             guard let d = line.data(using: .utf8),
                   let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let atS = j["at"] as? String, let at = f.date(from: atS) else { return nil }
@@ -526,28 +543,39 @@ final class AppState: ObservableObject {
 
     /// スピードテストは頻度が全く違うので、通常の観測ログとは別ファイルに残す。
     private func appendSpeedLog(_ r: NetProbe.SpeedResult) {
-        let f = ISO8601DateFormatter()
-        let line = "{\"at\":\"\(f.string(from: Date()))\",\"down\":\(r.downMbps ?? -1)," +
-                   "\"up\":\(r.upMbps ?? -1),\"rpm\":\(r.rpm ?? -1)," +
-                   "\"ssid\":\"\(monitor.linkForDisplay.ssid ?? "")\"," +
-                   "\"bssid\":\"\(monitor.linkForDisplay.bssid ?? "")\"}\n"
-        let url = SampleLog.dir.appendingPathComponent("speedtests.jsonl")
-        if let h = try? FileHandle(forWritingTo: url) {
-            defer { try? h.close() }
-            _ = try? h.seekToEnd()
-            try? h.write(contentsOf: Data(line.utf8))
-        } else {
-            try? Data(line.utf8).write(to: url)
+        // 文字列を手で組むと、SSID に " や \ や改行が入った瞬間に行が壊れる
+        // （SSIDは任意のバイト列を取りうる）。無限大やNaNでも壊れる。
+        func finite(_ v: Double?) -> Double {
+            guard let v, v.isFinite else { return -1 }
+            return v
         }
+        let obj: [String: Any] = [
+            "at": ISO8601DateFormatter().string(from: Date()),
+            "down": finite(r.downMbps),
+            "up": finite(r.upMbps),
+            "rpm": finite(r.rpm),
+            "ssid": monitor.linkForDisplay.ssid ?? "",
+            "bssid": monitor.linkForDisplay.bssid ?? "",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
+              let line = String(data: data, encoding: .utf8) else { return }
+        monitor.log.appendSpeedTest(line)
     }
 
     var speedSummary: String? {
         guard let r = speed, let at = speedAt else { return nil }
-        let f = DateFormatter(); f.dateFormat = "HH:mm"
+        let f = SampleLog.dayFormatter(); f.dateFormat = "HH:mm"
         guard let d = r.downMbps else { return "測定失敗（\(f.string(from: at))）" }
         var t = String(format: "下り %.0f Mbps", d)
         if let u = r.upMbps { t += String(format: " / 上り %.0f Mbps", u) }
         return t + "（\(f.string(from: at))時点）"
+    }
+
+    /// 位置情報の設定を開く。許可はアプリ側からは戻せないので、場所まで案内する。
+    func openLocationSettings() {
+        let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")
+        if let url { NSWorkspace.shared.open(url) }
     }
 
     /// 別のWi-Fiへ切り替える。混雑から逃げるための主操作。
@@ -594,7 +622,9 @@ final class AppState: ObservableObject {
             self.flash = "処理が完了しませんでした。もう一度お試しください"
         }
         busyWatchdog = w
-        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: w)
+        // つなぎ直しは最悪62秒、その後の確認に45秒かかる。90秒だと
+        // 本当の結果より先に「完了しませんでした」を出してしまう。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: w)
     }
 
     func clearFlash() { flash = nil }
@@ -609,7 +639,7 @@ final class AppState: ObservableObject {
 
     func exportReport() {
         let p = NSSavePanel()
-        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
+        let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
         let body = monitor.log.report(samples: monitor.log.load(date: Date()),
                                       title: "今日",

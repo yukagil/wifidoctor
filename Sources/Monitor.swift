@@ -142,12 +142,24 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         var l = link; l.txRate = smoothedTx; return l
     }
 
+    /// SSID/BSSID を読める状態か。
+    /// requestWhenInUseAuthorization を呼んでいるので、その結果も許可として数える。
     var locationAuthorized: Bool {
+        switch loc.authorizationStatus {
+        case .authorizedAlways, .authorized, .authorizedWhenInUse: return true
+        default: return false
+        }
+    }
+
+    /// 断られたことが確定しているか。まだ聞いていない状態と区別する。
+    var locationDenied: Bool {
         let s = loc.authorizationStatus
-        return s == .authorizedAlways || s == .authorized
+        return s == .denied || s == .restricted
     }
 
     func start() {
+        // 前回、つなぎ直しの途中で落ちていたら Wi-Fi が切れたまま残っている
+        Roamer.restoreIfInterrupted()
         loc.delegate = self
         requestLocationIfNeeded()
         notifier.requestAuthorization()
@@ -173,7 +185,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 self.recompute(); self.onUpdate?()
             }
 
-        gatewayIP = NetProbe.defaultGateway()
+        gatewayIP = NetProbe.defaultGateway(interface: LinkSampler.interfaceName)
         tickLink()
         // 起動時に一度だけスキャンしておく。最初にパネルを開いた時点で
         // 乗り換え候補を出せるようにするため。
@@ -206,10 +218,19 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         }
 
         let now = Date()
-        if now >= nextLink  { nextLink  = now.addingTimeInterval(linkInterval);  tickLink() }
-        if now >= nextProbe { nextProbe = now.addingTimeInterval(probeInterval); tickProbe() }
-        if now >= nextWAN   { nextWAN   = now.addingTimeInterval(wanInterval);   tickWAN() }
-        if now >= nextScan  { nextScan  = now.addingTimeInterval(180);           autoScan() }
+        // 壁時計が後ろへ飛ぶ（手動変更・大きなNTP補正・VM復帰）と、次回時刻が
+        // 未来のまま残り、時計が追いつくまで計測が全部止まる。しかも自力では戻らない。
+        // 予定が「今＋間隔」より先にあるのは時計が戻った証拠なので、今に引き戻す。
+        func due(_ next: inout Date, _ interval: TimeInterval) -> Bool {
+            if next > now.addingTimeInterval(interval) { next = now }
+            guard now >= next else { return false }
+            next = now.addingTimeInterval(interval)
+            return true
+        }
+        if due(&nextLink, linkInterval)   { tickLink() }
+        if due(&nextProbe, probeInterval) { tickProbe() }
+        if due(&nextWAN, wanInterval)     { tickWAN() }
+        if due(&nextScan, 180)            { autoScan() }
     }
 
     /// 悪化を検知したら細かい計測へ戻す。
@@ -291,13 +312,19 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     private func tickProbe() {
         guard !probing else { return }
         probing = true
+        // 背景へ渡す値は、入る前に main で確定させる。
+        // 中から self を読むと、probe 中の切断やローミングで書き換わる側と競合する。
+        let known = gatewayIP
+        let iface = LinkSampler.interfaceName
+        let wantProcs = fastMode || load.busy
         DispatchQueue.global().async {
-            let ip = self.gatewayIP ?? NetProbe.defaultGateway()
+            // Wi-Fi インターフェースに限定して引く。VPN が既定経路を持っていても
+            // 「自分 → Wi-Fi機器」を測れる。
+            let ip = known ?? NetProbe.defaultGateway(interface: iface)
             let g = ip.map { self.measureFirstHop($0, count: 5) }
             let c = NetProbe.counters(LinkSampler.interfaceName)
             // 画面を開いている間、または逼迫しているときだけアプリ一覧まで取る
-            let withProcs = self.fastMode || self.load.busy
-            let load = SystemLoad.read(includeProcesses: withProcs)
+            let load = SystemLoad.read(includeProcesses: wantProcs)
             DispatchQueue.main.async {
                 // アプリ一覧を取らなかった回は、前回の一覧を保つ
                 var load = load
@@ -392,7 +419,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
             let d = NetProbe.dnsMillis(server: NetProbe.primaryDNS())
             LinkSampler.refreshNoiseFallback()
             // サブプロセスを起こす処理なのでメインスレッドで呼ばない
-            let ip = NetProbe.defaultGateway()
+            let ip = NetProbe.defaultGateway(interface: LinkSampler.interfaceName)
             let vpn = NetProbe.vpnInterface()
             DispatchQueue.main.async {
                 self.vpnInterface = vpn
@@ -429,7 +456,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
 
         group.enter()
         DispatchQueue.global().async {
-            let ip = NetProbe.defaultGateway()
+            let ip = NetProbe.defaultGateway(interface: LinkSampler.interfaceName)
             let g = ip.map { NetProbe.ping($0, count: 15, interval: 0.2) }   // 通常より多めに撃つ
             let n = NetProbe.probeWAN()
             let d = NetProbe.dnsMillis(server: NetProbe.primaryDNS())

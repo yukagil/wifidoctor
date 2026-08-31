@@ -154,8 +154,9 @@ enum PlaceReport {
         return acc.map { key, a -> PlaceSummary in
             let enough = a.seconds >= PlaceSummary.minSeconds
             let mid = quantile(a.score, 0.5)
+            let badRatio = a.seconds > 0 ? a.badSeconds / a.seconds : 0
             let level: Level = !enough ? .offline
-                : (mid ?? 0) >= 80 ? .good : ((mid ?? 0) >= 60 ? .fair : .bad)
+                : Phrase.level(score: Int(mid ?? 0), badRatio: badRatio)
             let worst = a.byVerdict.filter { $0.key.isProblem }.max { $0.value < $1.value }
 
             return PlaceSummary(

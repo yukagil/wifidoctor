@@ -9,7 +9,9 @@
     <key>CFBundleVersion</key>           <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>    <string>13.0</string>
+    <key>CFBundleIconFile</key>          <string>WiFiDoctor</string>
+    <key>NSHumanReadableCopyright</key>  <string>© 2026 yukagil. MIT License.</string>
+    <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>接続中のアクセスポイント(SSID / BSSID)を識別し、会議室移動時に遠いAPを掴んだままになっていないか判定するために使用します。位置情報が外部に送信されることはありません。</string>

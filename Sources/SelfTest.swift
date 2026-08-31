@@ -21,6 +21,7 @@ enum SelfTest {
         // 本物の記録に触れさせない。ここを忘れると、保持期間のテストが
         // 実際のログを消す（一度やった）。
         SampleLog.useTemporaryDirectory()
+        Settings.useTemporaryStore()
         testPingParse()
         testVerdict()
         testScoreBounds()
@@ -40,9 +41,12 @@ enum SelfTest {
         testHourReport()
         testPlaceReport()
         testVocabulary()
+        testDistributionSafety()
         testScoreVerdictAgreement()
         testDownsample()
         testRetention()
+        testLogRobustness()
+        testDateFormatIndependence()
 
         print("チェック \(checks) 件")
         if failures.isEmpty {
@@ -649,6 +653,87 @@ enum SelfTest {
         if !hadOther { try? fm.removeItem(at: other) }
     }
 
+    /// 壊れた記録を読ませる。1バイトの不正で1日ぶんが読めなくなっていた。
+    private static func testLogRobustness() {
+        guard SampleLog.isTemporary else {
+            expect(false, "本物の記録フォルダに対して破損テストを走らせようとした")
+            return
+        }
+        let log = SampleLog()
+        let day = Date(timeIntervalSince1970: 1_600_000_000)
+        let url = SampleLog.fileURL(for: day)
+        let good = (0..<10).map { i -> Data in
+            var s = sample(i * 5, score: 90)
+            s.at = day.addingTimeInterval(Double(i) * 5)
+            s.ssid = "会議室のWi-Fi"          // 日本語＝マルチバイト
+            var d = try! JSONEncoder.iso8601.encode(s)
+            d.append(0x0A)
+            return d
+        }
+
+        func write(_ blocks: [Data]) {
+            var all = Data()
+            for b in blocks { all.append(b) }
+            try? FileManager.default.removeItem(at: url)
+            try? all.write(to: url)
+        }
+
+        write(good)
+        eq(log.load(date: day).count, 10, "正常なら全件読める")
+
+        // 末尾が途中で切れている（追記中に電源が落ちた形）
+        write(Array(good.prefix(9)) + [good[9].prefix(20)])
+        eq(log.load(date: day).count, 9, "書きかけの行だけを捨てる")
+
+        // マルチバイト文字の途中で切れて不正なバイト列が残った
+        var broken = Data()
+        for b in good.prefix(9) { broken.append(b) }
+        broken.append(contentsOf: [0xE4, 0xBC, 0x0A])   // 「会」の途中で切れた形
+        for b in good.suffix(1) { broken.append(b) }
+        write([broken])
+        eq(log.load(date: day).count, 10,
+           "不正なバイトが混ざっても、その行以外は読める")
+
+        // 空ファイル・存在しない日
+        write([])
+        eq(log.load(date: day).count, 0, "空でも落ちない")
+        try? FileManager.default.removeItem(at: url)
+        eq(log.load(date: day).count, 0, "無い日でも落ちない")
+    }
+
+    /// 日付の読み書きが、利用者の暦法設定に引きずられないこと。
+    /// 和暦や仏暦だとファイル名が変わり、暦を切り替えた瞬間に
+    /// 保持期間の削除が全部消す／一件も消さない のどちらかに振れていた。
+    private static func testDateFormatIndependence() {
+        let day = Date(timeIntervalSince1970: 1_600_000_000)
+        let f = SampleLog.dayFormatter()
+        eq(f.locale.identifier, "en_US_POSIX", "ロケールを固定している")
+        eq(f.calendar.identifier, Calendar.Identifier.gregorian, "暦を固定している")
+
+        let name = f.string(from: day)
+        expect(name.count == 10 && name.allSatisfy { $0.isASCII },
+               "ファイル名は西暦の半角10文字: \(name)")
+
+        // 暦法だけを変えた書式と比べ、影響を受けていないことを確かめる
+        for id in ["ja_JP@calendar=japanese", "th_TH@calendar=buddhist", "ar_SA"] {
+            let other = DateFormatter()
+            other.locale = Locale(identifier: id)
+            other.dateFormat = "yyyy-MM-dd"
+            expect(other.string(from: day) != name || id == "ar_SA",
+                   "比較用の書式が実際に別の結果を出す（テスト自体の妥当性）: \(id)")
+            expect(f.string(from: day) == name, "暦法を変えても結果が変わらない: \(id)")
+        }
+
+        // 書いた名前をそのまま読み戻せること（保持期間の判定が使う経路）
+        let back = f.date(from: name)
+        expect(back != nil, "自分が書いた名前を読み戻せる")
+        if let back {
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = .current
+            expect(cal.isDate(back, inSameDayAs: day), "同じ日として読み戻せる")
+        }
+    }
+
     // MARK: - 通知の抑制
 
     private static func testNotifier() {
@@ -799,6 +884,10 @@ enum SelfTest {
 
     /// APの呼び名。付けた名前が画面とレポートの両方に出ること。
     private static func testAPNames() {
+        guard Settings.isTemporary else {
+            expect(false, "本物の設定に対して呼び名のテストを走らせようとした")
+            return
+        }
         let bssid = "aa:bb:cc:11:22:33"
         let saved = APNames.name(for: bssid)
         defer { APNames.set(saved ?? "", for: bssid) }
@@ -890,6 +979,10 @@ enum SelfTest {
         eq(NetProbe.parseVPNInterface(""), nil, "経路が無ければ検出しない")
 
         // レポートに場所別の実績が出ること
+        guard Settings.isTemporary else {
+            expect(false, "本物の設定に対して呼び名のテストを走らせようとした")
+            return
+        }
         let bssid = "aa:bb:cc:11:22:44"
         let saved = APNames.name(for: bssid)
         defer { APNames.set(saved ?? "", for: bssid) }
@@ -1067,6 +1160,49 @@ enum SelfTest {
         }
         expect(PlaceGrouping.network.title.contains("接続先"),
                "SSID は画面の他の場所と同じ「接続先」と呼ぶ")
+    }
+
+    /// 他人の環境で黙って壊れる経路。ここが通らないものは配ってはいけない。
+    private static func testDistributionSafety() {
+        // 経路をインターフェースで限定できること。
+        // VPN が既定経路を持っていると、Wi-Fi機器までのつもりで
+        // トンネルの対向まで測ってしまい、恒常的に「混雑」と誤診断する。
+        let viaVPN = """
+           route to: default
+        destination: default
+                gateway: 10.8.0.1
+          interface: utun4
+        """
+        eq(NetProbe.parseGateway(viaVPN), "10.8.0.1", "経路からゲートウェイを読める")
+        eq(NetProbe.parseVPNInterface(viaVPN), "utun4", "VPN経由だと分かる")
+        eq(NetProbe.parseGateway("route to: default\n  interface: en0"), nil,
+           "ゲートウェイが無ければ nil")
+
+        // 良し悪しの物差しが画面ごとに違わないこと。
+        // 点数だけで決めると「80点＝快適」の隣に「崩れた時間 2時間39分」が並ぶ。
+        expect(Phrase.level(score: 85, badRatio: 0.05) == .good, "点が高く崩れも短ければ快適")
+        expect(Phrase.level(score: 85, badRatio: 0.77) == .fair,
+               "点が高くても、ほとんど崩れていたなら快適ではない")
+        expect(Phrase.level(score: 50, badRatio: 0.0) == .bad, "点が低ければ遅い")
+
+        // 存在しないボタン名を案内していないこと
+        let buttons = Set(PrimaryAction.allCases.map { $0.title })
+        for v in Verdict.allCases {
+            for name in ["［", "["] {
+                guard let r = v.advice.range(of: name) else { continue }
+                let rest = v.advice[r.upperBound...]
+                guard let end = rest.firstIndex(where: { $0 == "］" || $0 == "]" }) else { continue }
+                let label = String(rest[..<end])
+                expect(buttons.contains(label) || label == "レポートを書き出す",
+                       "案内しているボタンが実在する: \(v.rawValue) → \(label)")
+            }
+        }
+
+        // 通知は画面と同じ平易な言葉で出すこと
+        for v in Verdict.allCases where v.isProblem {
+            expect(!Phrase.headline(v).contains("AP以降"),
+                   "通知の見出しに内部の言い回しを使わない: \(v.rawValue)")
+        }
     }
 
     // MARK: - 表示整形

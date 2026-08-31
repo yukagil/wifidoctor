@@ -22,6 +22,28 @@ enum Roamer {
         var message: String
     }
 
+    /// Wi-Fi を切っている最中であることの目印。
+    /// 落ちてもここが残るので、次の起動で入れ直せる。
+    private static var markURL: URL { SampleLog.dir.appendingPathComponent("roaming.marker") }
+
+    static func markPowerOff(_ iface: String) {
+        try? iface.write(to: markURL, atomically: true, encoding: .utf8)
+    }
+    static func clearPowerOffMark() {
+        try? FileManager.default.removeItem(at: markURL)
+    }
+
+    /// 起動時に呼ぶ。前回つなぎ直しの途中で落ちていたら、Wi-Fi を戻す。
+    static func restoreIfInterrupted() {
+        guard let iface = try? String(contentsOf: markURL, encoding: .utf8), !iface.isEmpty else {
+            return
+        }
+        clearPowerOffMark()
+        DispatchQueue.global().async {
+            _ = NetProbe.run("/usr/sbin/networksetup", ["-setairportpower", iface, "on"], timeout: 8)
+        }
+    }
+
     static func forceRoam(target: CWNetwork?,
                           current: CWNetwork?,
                           progress: @escaping (String) -> Void,
@@ -53,6 +75,10 @@ enum Roamer {
             // 2) 電源の入れ直し。確実だが数秒切れる。
             //    切る時間は最小限でよい。長く空けても掴み直す先が良くなるわけではない。
             report("Wi-Fiを入れ直しています…")
+            // 切ってから入れ直すまでの間に落ちると、利用者のWi-Fiが切れたまま残る。
+            // プロセスと一緒に死なない目印をディスクに置き、次の起動で戻す。
+            Roamer.markPowerOff(iface)
+            defer { Roamer.clearPowerOffMark() }
             _ = NetProbe.run("/usr/sbin/networksetup", ["-setairportpower", iface, "off"], timeout: 8)
             Thread.sleep(forTimeInterval: 0.4)
             _ = NetProbe.run("/usr/sbin/networksetup", ["-setairportpower", iface, "on"], timeout: 8)
@@ -78,7 +104,7 @@ enum Roamer {
     private static func waitUsable(_ seconds: Double) -> Bool {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
-            if let gw = NetProbe.defaultGateway(),
+            if let gw = NetProbe.defaultGateway(interface: LinkSampler.interfaceName),
                NetProbe.ping(gw, count: 1, interval: 0.2).loss < 100 { return true }
             Thread.sleep(forTimeInterval: 0.3)
         }

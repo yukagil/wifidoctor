@@ -16,7 +16,7 @@ if CommandLine.arguments.contains("--status") {
     // ホットキーが他アプリと衝突していると登録に失敗する。黙って効かなくなるので確認できるようにする。
     let hk = HotKey(keyCode: UInt32(kVK_ANSI_W), modifiers: UInt32(cmdKey | optionKey)) {}
     print("hotkey ⌥⌘W: \(hk != nil ? "登録できる" : "登録失敗（他アプリと衝突）")")
-    print("gateway:     \(NetProbe.defaultGateway() ?? "見つからない")")
+    print("gateway:     \(NetProbe.defaultGateway(interface: LinkSampler.interfaceName) ?? "見つからない")")
     print("interface:   \(LinkSampler.interfaceName)")
     print("log dir:     \(SampleLog.dir.path)")
     exit(0)

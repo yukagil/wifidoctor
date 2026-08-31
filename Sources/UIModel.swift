@@ -36,6 +36,12 @@ enum Level {
             return base.blended(withFraction: darken, of: .black) ?? base
         })
     }
+    /// 測定中は「まだ分からない」であって「切れている」ではない。
+    /// 起動直後に斜線入りのWi-Fiが出ると、繋がっているのに壊れて見える。
+    static func symbol(for level: Level, measuring: Bool) -> String {
+        measuring ? "wifi" : level.symbol
+    }
+
     var symbol: String {
         switch self {
         case .good: return "checkmark.circle.fill"
@@ -48,7 +54,9 @@ enum Level {
 
 /// 「この回線で実際に何ができるか」。数値の目安が分からない人向けの翻訳層。
 struct Capability: Identifiable {
-    let id = UUID()
+    // 2秒ごとに作り直されるので、UUID だと SwiftUI が毎回捨てて作り直す。
+    // 中身が同じなら同じ id になるようにする。
+    var id: String { "\(icon)/\(name)" }
     var icon: String
     var name: String
     var level: Level
@@ -80,7 +88,7 @@ struct NetworkCandidate: Identifiable {
 }
 
 /// 主ボタンが何をするか。原因によって「効く手」が違うので、ボタン自体を差し替える。
-enum PrimaryAction {
+enum PrimaryAction: CaseIterable {
     case reconnect        // 遠いAPを掴んでいる → 掴み直す
     case switchNetwork    // 混雑 → 別の回線へ逃がす
     case report           // 自分では直せない → 情シスへ渡す材料を作る
@@ -114,7 +122,7 @@ enum PrimaryAction {
 
 /// 経路図の1点（パソコン / Wi-Fi機器 / インターネット）。
 struct PathNode: Identifiable {
-    let id = UUID()
+    var id: String { title }
     var icon: String
     var title: String
     var caption: String?
@@ -123,7 +131,7 @@ struct PathNode: Identifiable {
 
 /// 経路図の1区間。ここが「どこで詰まっているか」を絵で示す本体。
 struct PathSegment: Identifiable {
-    let id = UUID()
+    var id: String { "\(word)/\(value)" }
     var word: String        // 「速い」「やや遅い」など
     var value: String       // 「7 ミリ秒」
     var level: Level
@@ -150,6 +158,10 @@ struct Snapshot {
     /// この場所で使える物理APの台数。1台なら混雑は構造的で、切替では直らない。
     var usableAPs: Int = 0
     var vpn: String?
+    /// 位置情報を断られている。SSID/BSSID が読めず、場所の機能が全部死ぬ。
+    var locationDenied = false
+    /// まだ一度も測れていない。「切れている」とは違う。
+    var measuring = false
     /// このMacの状態を1行で。切り分けの片側なので常時見えている必要がある。
     var macLine: String = ""
     var macWarn = false
@@ -159,7 +171,7 @@ struct Snapshot {
 }
 
 struct DetailRow: Identifiable {
-    let id = UUID()
+    var id: String { label }
     var label: String
     var value: String
     var note: String?              // 平易な補足
@@ -169,6 +181,18 @@ struct DetailRow: Identifiable {
 // MARK: - 技術値 → 平易な日本語
 
 enum Phrase {
+
+    /// 記録をまとめたときの良し悪し。
+    ///
+    /// 点数だけで決めると、判定が「問題あり」だった時間が長くても
+    /// 「快適」と名乗ってしまう（点数と判定は別のしきい値で動いている）。
+    /// その瞬間の判定を使う `level(score:verdict:)` と辻褄が合うように、
+    /// 崩れていた時間の割合も効かせる。
+    static func level(score: Int, badRatio: Double) -> Level {
+        if score >= 80 && badRatio < 0.25 { return .good }
+        if score >= 60 { return .fair }
+        return .bad
+    }
 
     static func level(score: Int, verdict: Verdict) -> Level {
         if verdict == .offline { return .offline }

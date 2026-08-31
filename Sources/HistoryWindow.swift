@@ -74,7 +74,7 @@ final class ChartView: NSView {
             Series(title: "ゆらぎ (ms)",
                    note: "会議の音声が途切れる主因",
                    lo: 0, hi: jitHi,
-                   lines: [Line(title: "ジッタ", color: .systemOrange, value: { $0.gwJitter })],
+                   lines: [Line(title: "ゆらぎ", color: .systemOrange, value: { $0.gwJitter })],
                    fmt: ms),
 
             Series(title: "パケット損失 (%)",
@@ -218,7 +218,7 @@ final class ChartView: NSView {
             }
         }
 
-        let tf = DateFormatter()
+        let tf = SampleLog.dayFormatter()
         tf.dateFormat = (t1 - t0) > 86_400 ? "M/d HH:mm" : "HH:mm"
         for f in stride(from: 0.0, through: 1.0, by: 0.2) {
             let idx = min(samples.count - 1, Int(Double(samples.count - 1) * f))
@@ -362,7 +362,7 @@ final class ChartView: NSView {
                 .foregroundColor: tint ?? NSColor.labelColor, .paragraphStyle: p]))
         }
 
-        let tf = DateFormatter(); tf.dateFormat = "M月d日 HH:mm:ss"
+        let tf = SampleLog.dayFormatter(); tf.dateFormat = "M月d日 HH:mm:ss"
         out.append(NSAttributedString(string: tf.string(from: s.at) + "\n", attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: NSColor.labelColor, .paragraphStyle: p]))
@@ -426,8 +426,8 @@ enum Palette {
         case .offline: return .systemGray
         }
     }
-    static func level(score: Int) -> Level {
-        score >= 80 ? .good : (score >= 60 ? .fair : .bad)
+    static func level(score: Int, badRatio: Double = 0) -> Level {
+        Phrase.level(score: score, badRatio: badRatio)
     }
     static func word(_ l: Level) -> String {
         switch l {
@@ -966,7 +966,10 @@ final class HistoryWindowController: NSWindowController {
         build()
         // 保存済みのサイズを使うが、壊れて極端に小さい場合は既定に戻す。
         // 一度潰れたサイズが保存されると、次から開くたびに潰れたままになる。
-        w.setFrameAutosaveName("WiFiDoctorHistory")
+        // テスト中は保存しない。利用者が調整した位置とサイズを潰してしまう。
+        if let name = Settings.windowAutosaveName("WiFiDoctorHistory") {
+            w.setFrameAutosaveName(name)
+        }
         // 復元値は minSize でクランプされてから返るので、minSize と比べても必ず通ってしまう。
         // 中身が必要としている大きさと比べ、足りなければ既定に戻す。
         let need = w.contentView?.fittingSize ?? .zero
@@ -1271,7 +1274,7 @@ final class HistoryWindowController: NSWindowController {
             let cond = [selectedHour.map { "\($0)時台" },
                         selectedKey.flatMap { k in places.first { $0.key == k }?.name }]
                 .compactMap { $0 }.joined(separator: " ・ ")
-            let t = NSTextField(wrappingLabelWithString: current.isEmpty
+            let t = NSTextField(wrappingLabelWithString: current.isEmpty || cond.isEmpty
                 ? "この期間の記録がまだありません。しばらく使うと、つないでいた先がここに並びます。\n"
                     + "APに呼び名を付けておくと、会議室の名前で並びます。"
                 : "\(cond)の記録はありません。")
@@ -1360,12 +1363,14 @@ final class HistoryWindowController: NSWindowController {
         if !second.isEmpty { lines.append(second.joined(separator: "、") + "。") }
 
         verdict.set(score: Int(mid.rounded()), bad: low.map { Int($0.rounded()) },
-                    level: Palette.level(score: Int(mid.rounded())), lines: lines)
+                    level: Palette.level(score: Int(mid.rounded()),
+                                         badRatio: badSeconds / connected),
+                    lines: lines)
     }
 
     @objc private func exportReport() {
         let p = NSSavePanel()
-        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
+        let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
         // 畳んだままでも書き出せるように、ここで組み立てる
         let body = text.string.isEmpty

@@ -42,22 +42,25 @@ final class MenuController: NSObject, NSPopoverDelegate {
         }
         RunLoop.main.add(refreshTimer!, forMode: .common)
 
-        hotKey = HotKey(keyCode: UInt32(kVK_ANSI_W),
-                        modifiers: UInt32(cmdKey | optionKey)) { [weak self] in
-            self?.hotKeyFired()
-        }
+        // ⌥⌘W は macOS 標準の「すべてのウインドウを閉じる」。
+        // RegisterEventHotKey はシステム全域なので、既定で登録すると
+        // 入れた瞬間から全アプリでその操作が効かなくなる。
+        // 使う人はWi-Fiアプリのせいだと気づけないので、明示的に有効にしたときだけ登録する。
+        applyHotKey()
+        app.onHotKeyChange = { [weak self] in self?.applyHotKey() }
+        monitor.notifier.enabled = app.notifyOn
 
         // 自動起動の指定があれば、ユーザー操作を待たずに登録する
-        if UserDefaults.standard.bool(forKey: "autoStartRequested"), !LoginItem.isEnabled {
+        if Settings.store.bool(forKey: "autoStartRequested"), !LoginItem.isEnabled {
             _ = LoginItem.set(true)
             app.loginOn = LoginItem.isEnabled
-            UserDefaults.standard.removeObject(forKey: "autoStartRequested")
+            Settings.store.removeObject(forKey: "autoStartRequested")
         }
 
         render()
 
-        if !UserDefaults.standard.bool(forKey: "didIntroduce") {
-            UserDefaults.standard.set(true, forKey: "didIntroduce")
+        if !Settings.store.bool(forKey: "didIntroduce") {
+            Settings.store.set(true, forKey: "didIntroduce")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 self?.showPopover()
             }
@@ -85,6 +88,9 @@ final class MenuController: NSObject, NSPopoverDelegate {
 
     private func symbolName() -> String {
         guard monitor.link.associated else { return "wifi.slash" }
+        // 測定中は「切れている」ではない。起動直後に斜線を出すと、
+        // 隣にスコアが並んでいるのに切断中に見える。
+        if app.snap.measuring { return "wifi" }
         switch app.snap.level {
         case .good: return "wifi"
         case .fair: return "wifi.exclamationmark"
@@ -118,7 +124,7 @@ final class MenuController: NSObject, NSPopoverDelegate {
         }
 
         // メニューバーが混むと溢れて消えるので、既定でも幅は数値2桁ぶんに抑える
-        let compact = UserDefaults.standard.bool(forKey: "compactBar")
+        let compact = Settings.store.bool(forKey: "compactBar")
         b.attributedTitle = NSAttributedString(
             string: compact ? "" : (monitor.link.associated ? " \(monitor.score)" : " --"),
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
@@ -161,6 +167,16 @@ final class MenuController: NSObject, NSPopoverDelegate {
     private func hotKeyFired() {
         showPopover()
         app.quickScan()
+    }
+
+    /// 設定に従ってホットキーを登録・解除する。
+    func applyHotKey() {
+        hotKey = nil
+        guard app.hotKeyOn else { return }
+        hotKey = HotKey(keyCode: UInt32(kVK_ANSI_W),
+                        modifiers: UInt32(cmdKey | optionKey)) { [weak self] in
+            self?.hotKeyFired()
+        }
     }
 
     private func showHistory() {

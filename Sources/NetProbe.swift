@@ -31,12 +31,28 @@ enum NetProbe {
     }
 
     /// デフォルトゲートウェイのIP。会議室を移動してもサブネットが変わりうるので毎回引き直す。
-    static func defaultGateway() -> String? {
-        let s = run("/sbin/route", ["-n", "get", "default"], timeout: 3)
+    ///
+    /// インターフェースを指定できるようにしてあるのは VPN のため。
+    /// フルトンネルVPN下では既定経路の相手がトンネルの対向になり、
+    /// 「自分 → Wi-Fi機器」として測った値がインターネット越しの往復になる。
+    /// 12ms の閾値をまず超えるので、混雑していなくても恒常的に「混雑」と誤診断していた。
+    static func defaultGateway(interface: String? = nil) -> String? {
+        if let interface, !interface.isEmpty {
+            let scoped = run("/sbin/route", ["-n", "get", "-ifscope", interface, "default"],
+                             timeout: 3)
+            if let ip = parseGateway(scoped) { return ip }
+        }
+        return parseGateway(run("/sbin/route", ["-n", "get", "default"], timeout: 3))
+    }
+
+    /// 実際に route を叩かずに検証できるよう分離してある。
+    static func parseGateway(_ s: String) -> String? {
         for line in s.split(separator: "\n") {
             let t = line.trimmingCharacters(in: .whitespaces)
             if t.hasPrefix("gateway:") {
-                return t.replacingOccurrences(of: "gateway:", with: "").trimmingCharacters(in: .whitespaces)
+                let ip = t.replacingOccurrences(of: "gateway:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                return ip.isEmpty ? nil : ip
             }
         }
         return nil

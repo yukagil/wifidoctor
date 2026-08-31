@@ -51,7 +51,7 @@ enum Verdict: String, Codable, CaseIterable {
         case .sticky:    return "遠いAPを掴んでいる"
         case .congested: return "APが混雑"
         case .weak:      return "電波が弱い"
-        case .isp:       return "AP以降(回線)が遅い"
+        case .isp:       return "AP以降（回線）が遅い"
         case .dns:       return "DNSが遅い"
         case .selfTraffic: return "このMacの通信で混雑"
         case .macBusy:   return "Macの負荷が高い"
@@ -65,7 +65,7 @@ enum Verdict: String, Codable, CaseIterable {
     var advice: String {
         switch self {
         case .ok:        return "問題ありません。"
-        case .sticky:    return "より強いAPが近くにあります。[強制ローミング] で掴み直してください。"
+        case .sticky:    return "より強いAPが近くにあります。［つなぎ直す］で掴み直してください。"
         case .congested: return "電波は良好なのに遅延が出ています。APの利用者過多か干渉です。別の会議室/別バンドへ移動するか、有線・テザリングを検討してください。"
         case .weak:      return "APから遠すぎます。物理的にAPへ近づいてください。近くに代わりのAPは見つかりません。"
         case .isp:       return "自分〜AP間は正常です。原因は社内NW/ISP側なので情シスへ連携してください（［レポートを書き出す］の結果を添付）。"
@@ -187,4 +187,11 @@ struct SeenAP {
     var band: Int
     var isCurrent: Bool
     var secure: Bool = true      // 暗号化あり＝パスワードが要る
+}
+
+extension JSONEncoder {
+    /// 記録の書式。SampleLog と動作確認で同じものを使う。
+    static let iso8601: JSONEncoder = {
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
+    }()
 }

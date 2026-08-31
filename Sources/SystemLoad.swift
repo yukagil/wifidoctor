@@ -93,12 +93,20 @@ struct SystemLoad {
     }
 
     // 前回のCPUチックとスワップ回数。差分を取るために保持する。
+    // 前回値は2つの経路（5秒ごとの計測と、パネルを開いたときの即時更新）から
+    // 同時に読み書きされる。ARCを伴わない値なので落ちはしないが、差分が壊れて
+    // CPU使用率が実態とかけ離れ、「Macの負荷が高い」が誤って出る。
+    private static let lock = NSLock()
     private static var prevCPU: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
     private static var prevSwap: (inC: UInt64, outC: UInt64, at: Date)?
 
     /// - Parameter includeProcesses: アプリ一覧まで取るか。
     ///   ps は40msほどかかるので、5秒ごとの計測では省いて画面を開くときだけ取る。
     static func read(includeProcesses: Bool = false) -> SystemLoad {
+        // 前回値との差分を取る処理なので、2本が同時に入ると差分が壊れる。
+        // 重い部分（プロセス一覧）は外に出してあるので、ここは短時間で抜ける。
+        lock.lock()
+        defer { lock.unlock() }
         var s = SystemLoad()
 
         var loads = [Double](repeating: 0, count: 3)
@@ -162,7 +170,10 @@ struct SystemLoad {
         }
 
         if includeProcesses {
+            // ps を起動する重い処理。差分の計算とは無関係なので錠の外で行う。
+            lock.unlock()
             let procs = ProcessUsage.read()
+            lock.lock()
             s.topCPU = Array(procs.cpu.prefix(5))
             s.topMemory = Array(procs.memory.prefix(5))
         }

@@ -73,7 +73,7 @@ enum HourReport {
                 hour: h,
                 seconds: a.seconds,
                 score: mid,
-                level: mid >= 80 ? .good : (mid >= 60 ? .fair : .bad),
+                level: Phrase.level(score: mid, badRatio: a.badSeconds / a.seconds),
                 badSeconds: a.badSeconds,
                 badRatio: a.badSeconds / a.seconds,
                 topProblem: worst?.key,

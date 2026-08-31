@@ -46,12 +46,33 @@ Wi-Fiが遅いときに、**どこが原因かを切り分けて、打てる手�
 - **打てる手が無いときはボタンを出さない。** 実用的なAPが1台しかない場所では、
   つなぎ直しても切り替えても混雑は解消しない。その事実を伝えるほうが役に立つ。
 
+## 動作条件
+
+macOS 14 以降。Apple Silicon と Intel の両方（universal）。
+UI・判定文・レポートはすべて日本語のみ。
+
+開発機（macOS 26 / Apple Silicon）以外では動作を確認していない。
+
 ## ビルドと実行
 
 ```sh
 ./build.sh                        # ビルドして ~/Applications へ設置
 open ~/Applications/WiFiDoctor.app
 ```
+
+### 他人に配るとき
+
+`build.sh` は Developer ID があればそれで署名する。
+
+```sh
+DEVELOPER_ID="Developer ID Application: 名前 (TEAMID)" ./build.sh
+xcrun notarytool submit --wait ...   # 公証
+xcrun stapler staple build/WiFiDoctor.app
+```
+
+**署名と公証をしない .app は、他人の Mac では Gatekeeper に止まる。**
+さらに ad-hoc 署名だと、バージョンを上げるたびに macOS からは別のアプリに見えるため、
+位置情報の許可と自動起動の登録がリセットされる。配る前に必ず済ませること。
 
 `.app` バンドルにしているのは、位置情報の許可（SSID/BSSID の取得に必須）と
 通知の許可が、バンドル＋署名なしでは取れないため。初回起動時に位置情報の許可を求める。
@@ -65,7 +86,8 @@ open ~/Applications/WiFiDoctor.app
 ~/Applications/WiFiDoctor.app/Contents/MacOS/WiFiDoctor --test
 ```
 
-約 2,900 チェック。
+約 3,000 チェック。テストは記録フォルダも設定も一時領域に切り替えてから走るので、
+実際のデータには触れない。
 
 - `--selftest` … 判定ロジック、点数と判定の整合、ping解析、保存と差分読み、
   通知の抑制、集計、保持期間、文言の網羅
@@ -84,7 +106,34 @@ WiFiDoctor --roamtest    # つなぎ直しの所要時間（数秒切断され�
 ## 記録
 
 `~/Library/Application Support/WiFiDoctor/YYYY-MM-DD.jsonl` に1行ずつ。
-30日を超えたものは自動削除する。外部への送信は一切ない。
+1日あたり約5MB、30日を超えたものは自動削除する（最大およそ150MB）。
+
+1行に入るもの: 時刻 / SSID / BSSID / 電波強度 / ノイズ / リンク速度 / チャンネル /
+帯域 / 規格 / AP までの応答・ゆらぎ・とりこぼし / インターネットまでの応答・とりこぼし /
+DNS の応答時間 / このMacの送受信量 / スコア / 判定。
+速度テストの結果だけは `speedtests.jsonl` に別に残る（最新500件）。
+
+**記録は外へ送らない。** ただしアプリ自体は通信する。
+
+| 宛先 | 内容 | 間隔 |
+| --- | --- | --- |
+| 接続中のWi-Fi機器 | ping 5発 | 5〜18秒 |
+| `1.1.1.1` と `8.8.8.8` | ping 各6発 | 30〜90秒 |
+| `www.google.com` | 名前解決1回（OSのリゾルバ経由） | 30〜90秒 |
+| Apple の計測サーバ | `networkQuality`（回線を約20秒占有） | 手動で押したときだけ |
+
+**レポートを書き出すと、接続していたAP（BSSIDと呼び名）と時間帯が入る。**
+「12〜14時、18〜20時」のような形なので、会議室に名前を付けていれば、
+その日どこに何時間いたかが読める文書になる。渡す相手を選ぶこと。
+
+### 消し方
+
+```sh
+rm -rf ~/Library/Application\ Support/WiFiDoctor   # 記録
+defaults delete dev.yukagil.wifidoctor              # 設定（APの呼び名を含む）
+rm -f ~/Library/LaunchAgents/dev.yukagil.wifidoctor.plist   # 自動起動
+rm -rf ~/Applications/WiFiDoctor.app
+```
 
 ## macOS の制約でできないこと
 

@@ -7,7 +7,7 @@ enum APNames {
     private static let key = "apNames"
 
     static func all() -> [String: String] {
-        UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        Settings.store.dictionary(forKey: key) as? [String: String] ?? [:]
     }
 
     static func name(for bssid: String?) -> String? {
@@ -19,7 +19,7 @@ enum APNames {
         var d = all()
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { d.removeValue(forKey: bssid) } else { d[bssid] = trimmed }
-        UserDefaults.standard.set(d, forKey: key)
+        Settings.store.set(d, forKey: key)
     }
 
     /// 区切りを外した16進の末尾3オクテット。

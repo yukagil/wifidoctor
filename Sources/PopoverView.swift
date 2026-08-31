@@ -139,9 +139,6 @@ struct MiniTrend: View {
                 Text("今日の調子")
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("・5秒ごとに自動更新中")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
             }
 
             // 横軸は常に 0:00〜24:00 で固定する。記録のある時間だけが塗られ、
@@ -258,11 +255,34 @@ struct HomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
 
+            // 位置情報が無いと、接続先の名前・場所ごとの比較・切替候補が全部死ぬ。
+            // macOSは許可の確認を一度しか出さないので、断った人は自力で戻れない。
+            // 色や絵では伝えられないので、ここだけは文と導線を置く。
+            if snap.locationDenied {
+                Button(action: { app.openLocationSettings() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "location.slash")
+                            .font(.system(size: 11))
+                        Text("位置情報の許可が無いため、接続先を識別できません")
+                            .font(.system(size: 11))
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundStyle(Level.fair.textTint)
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Level.fair.tint.opacity(0.12))
+                }
+                .buttonStyle(.plain)
+            }
+
             // 状態の一言 + スコア
             HStack(alignment: .top, spacing: 11) {
                 ZStack {
                     Circle().fill(snap.level.tint.opacity(0.15))
-                    Image(systemName: snap.level.symbol)
+                    Image(systemName: Level.symbol(for: snap.level, measuring: snap.measuring))
                         .font(.system(size: 19, weight: .medium))
                         .foregroundStyle(snap.level.textTint)
                 }
@@ -297,7 +317,7 @@ struct HomeView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
                 .disabled(app.busy != nil)
-                .help("今すぐ測り直す（⌥⌘W）")
+                .help(app.hotKeyOn ? "今すぐ測り直す（⌥⌘W）" : "今すぐ測り直す")
 
                 // 総合スコア。細かい指標を見なくても良し悪しの度合いが分かる。
                 VStack(spacing: 0) {
@@ -426,7 +446,11 @@ struct HomeView: View {
                     .buttonStyle(BigButtonStyle(tint: .accentColor, enabled: app.busy == nil))
                     .disabled(app.busy != nil)
 
-                    Text(snap.primary.caption)
+                    // VPN中につなぎ直すと、Wi-Fiだけでなく VPN のセッションも切れる。
+                    // 押す前に知らせないと、会議や作業の途中で落ちる。
+                    Text(snap.primary == .reconnect && snap.vpn != nil
+                         ? "数秒だけ通信が切れます。VPNもつなぎ直しになります"
+                         : snap.primary.caption)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -471,9 +495,13 @@ struct SwitchingView: View {
 
                     if app.snap.candidates.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("切り替えられる回線が見つかりません")
+                            Text(app.snap.locationDenied
+                                 ? "位置情報の許可が無いため、近くのWi-Fiを調べられません"
+                                 : "切り替えられる回線が見つかりません")
                                 .font(.system(size: 12, weight: .medium))
-                            Text("iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
+                            Text(app.snap.locationDenied
+                                 ? "システム設定 > プライバシーとセキュリティ > 位置情報サービス で許可してください。"
+                                 : "iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -805,8 +833,13 @@ struct SettingsView: View {
                 if !app.loginStatus.isEmpty && app.loginStatus != "有効" && app.loginOn {
                     Text(app.loginStatus)
                         .font(.system(size: 9.5))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Level.fair.textTint)
                 }
+                Toggle("⌥⌘W で呼び出す", isOn: $app.hotKeyOn)
+                Text("入れると、他のアプリの ⌥⌘W（すべてのウインドウを閉じる）が効かなくなります")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle("メニューバーの表示を最小にする", isOn: $app.compactBar)
                 Text("メニューバーが混雑していてアイコンが隠れるときに使ってください")
                     .font(.system(size: 9.5))
@@ -974,7 +1007,9 @@ struct NamingView: View {
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("接続していないため名前を付けられません")
+                            Text(app.snap.locationDenied
+                                 ? "位置情報の許可が無いため、どのAPかを識別できません"
+                                 : "接続していないため名前を付けられません")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }

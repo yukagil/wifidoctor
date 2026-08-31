@@ -21,13 +21,16 @@ final class Notifier {
     private var runStartedAt: Date?
     private var notifiedProblem: Verdict?
     private var useUNC = false
+    /// 利用者が通知を拒否したか。拒否されているなら代替手段でも出さない。
+    /// osascript 経由の通知は別アプリの権限で出るため、拒否した設定を素通りしてしまう。
+    private var denied = false
     /// テスト時に実際の通知を出さずに検証するための差し替え口。
     var deliver: ((String, String) -> Void)?
 
     func requestAuthorization() {
         guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { ok, _ in
-            DispatchQueue.main.async { self.useUNC = ok }
+            DispatchQueue.main.async { self.useUNC = ok; self.denied = !ok }
         }
     }
 
@@ -46,10 +49,14 @@ final class Notifier {
             if let last = lastSentAt[verdict], t.timeIntervalSince(last) < cooldown { return }
             lastSentAt[verdict] = t
             notifiedProblem = verdict
-            send(title: "Wi-Fi \(verdict.label)（\(score)点）", body: detail)
+            // 通知はアプリを開かなくても届く唯一の画面。ここだけ専門語のままだと、
+            // 画面用に用意した平易な言い回しが全部無駄になる。
+            send(title: "\(Phrase.headline(verdict))（\(score)点）",
+                 body: Phrase.hint(verdict) ?? detail)
         } else if verdict == .ok, let was = notifiedProblem, sustained >= requiredDuration {
             notifiedProblem = nil
-            send(title: "Wi-Fi 復旧（\(score)点）", body: "「\(was.label)」は解消しました。")
+            send(title: "Wi-Fiが元に戻りました（\(score)点）",
+                 body: "\(Phrase.headline(was))は解消しました。")
         }
     }
 
@@ -60,9 +67,14 @@ final class Notifier {
             c.title = title; c.body = body; c.sound = .default
             UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
-        } else {
-            // 通知の許可が取れない環境向けのフォールバック
-            let esc: (String) -> String = { $0.replacingOccurrences(of: "\"", with: "'") }
+        } else if !denied, Bundle.main.bundleIdentifier == nil {
+            // 通知の仕組みが使えない開発時だけの代替手段。
+            // 拒否された場合に使うと、別アプリの権限で出るため設定を素通りしてしまう。
+            // AppleScript の文字列に入れるので、引用符と円記号の両方を落とす。
+            let esc: (String) -> String = {
+                $0.replacingOccurrences(of: "\\", with: "")
+                    .replacingOccurrences(of: "\"", with: "'")
+            }
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", "display notification \"\(esc(body))\" with title \"\(esc(title))\""]

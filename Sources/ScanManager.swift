@@ -86,7 +86,7 @@ final class ScanManager {
     /// SSIDが取れるかどうかは権限のある実行環境でしか確かめられず、
     /// ここが nil だと乗り換え候補の機能が黙って何も出さなくなる。
     private func writeDiagnostic(_ found: [SeenAP]) {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let f = SampleLog.dayFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         var t = "最終スキャン \(f.string(from: Date()))\n"
         t += "取得数 \(found.count) / SSIDが取れた数 \(found.filter { $0.ssid != nil }.count)"
         t += " / BSSIDが取れた数 \(found.filter { $0.bssid != nil }.count)\n"
