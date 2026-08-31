@@ -33,7 +33,6 @@ enum UITest {
         testLoadInsight()
         testScanCache()
 
-        Settings.cleanUpTemporaryStores()
         print("チェック \(checks) 件")
         if failures.isEmpty { print("すべて合格"); return 0 }
         print("失敗 \(failures.count) 件:")

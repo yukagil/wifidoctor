@@ -30,11 +30,28 @@ enum Level {
     }
 
     private static func adaptive(_ base: NSColor, darken: CGFloat = 0.10) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: Level.adaptiveNS(base, darken: darken))
+    }
+
+    /// AppKit 側でも同じ色を使えるようにする。履歴ウインドウは手描きなので、
+    /// ここを通さないと白背景に明るい橙や緑をそのまま置くことになり、
+    /// コントラストが 2:1 前後まで落ちて本文として読めなくなる。
+    static func adaptiveNS(_ base: NSColor, darken: CGFloat = 0.10) -> NSColor {
+        NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             if isDark { return base }
             return base.blended(withFraction: darken, of: .black) ?? base
-        })
+        }
+    }
+
+    /// 文字に使う色（AppKit）。SwiftUI の `textTint` と同じ濃さにする。
+    var nsTextTint: NSColor {
+        switch self {
+        case .good: return Level.adaptiveNS(.systemGreen, darken: 0.34)
+        case .fair: return Level.adaptiveNS(.systemOrange, darken: 0.34)
+        case .bad: return Level.adaptiveNS(.systemRed, darken: 0.22)
+        case .offline: return .secondaryLabelColor
+        }
     }
     /// 測定中は「まだ分からない」であって「切れている」ではない。
     /// 起動直後に斜線入りのWi-Fiが出ると、繋がっているのに壊れて見える。

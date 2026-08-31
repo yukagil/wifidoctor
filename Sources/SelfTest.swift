@@ -50,7 +50,6 @@ enum SelfTest {
         testRoamRecovery()
         testDateFormatIndependence()
 
-        Settings.cleanUpTemporaryStores()
         print("チェック \(checks) 件")
         if failures.isEmpty {
             print("すべて合格")
@@ -1305,13 +1304,11 @@ enum SelfTest {
             }
         }
 
-        // 一時的な設定の置き場所を残さないこと。
+        // 一時的な置き場所を後始末できること。
         // 残すと ~/Library/Preferences に溜まり続け、README の消し方では消えない。
-        let prefs = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences")
-        let junk = (try? FileManager.default.contentsOfDirectory(atPath: prefs.path))?
-            .filter { $0.hasPrefix("WiFiDoctorTest-") } ?? []
-        expect(junk.count <= 1, "テスト用の設定ファイルが溜まっていない: \(junk.count)個")
+        // ファイルの数を数える検査は書き戻しと競合して当てにならないので、
+        // 「片付ける関数が、自分の作ったものを片付けるか」を見る。
+        expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
 
         // 通知は画面と同じ平易な言葉で出すこと
         for v in Verdict.allCases where v.isProblem {

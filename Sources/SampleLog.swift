@@ -22,16 +22,21 @@ final class SampleLog {
     static func useTemporaryDirectory() -> URL {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("WiFiDoctorTest-\(UUID().uuidString)", isDirectory: true)
+        cleanUpTemporaryDirectory()   // 自分が前に作ったぶんを孤児にしない
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        // 前回までの残骸を片付ける。テストのたびに溜まっていく。
-        let base = URL(fileURLWithPath: NSTemporaryDirectory())
-        if let old = try? FileManager.default.contentsOfDirectory(atPath: base.path) {
-            for n in old where n.hasPrefix("WiFiDoctorTest-") && n != tmp.lastPathComponent {
-                try? FileManager.default.removeItem(at: base.appendingPathComponent(n))
-            }
-        }
+        temporaryDir = tmp
         dir = tmp
         return tmp
+    }
+
+    private static var temporaryDir: URL?
+
+    /// 自分が作った一時領域だけを片付ける。
+    /// 起動時に他のぶんまで消すと、テストを2つ走らせたときに使用中のものを消す。
+    static func cleanUpTemporaryDirectory() {
+        guard let tmp = temporaryDir else { return }
+        try? FileManager.default.removeItem(at: tmp)
+        temporaryDir = nil
     }
 
     /// 本物の置き場所を使っていないこと。壊す側のテストはこれを確かめてから動く。

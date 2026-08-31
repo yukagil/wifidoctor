@@ -16,29 +16,28 @@ enum Settings {
     /// しかも README が案内する消し方では消えない。
     @discardableResult
     static func useTemporaryStore() -> String {
-        cleanUpTemporaryStores()
+        cleanUpTemporaryStores()   // 自分が前に作ったぶんを孤児にしない
         let name = testPrefix + UUID().uuidString
         store = UserDefaults(suiteName: name) ?? .standard
         temporaryName = name
         return name
     }
 
-    /// 今回ぶんと、前回までの残骸をまとめて片付ける。
-    static func cleanUpTemporaryStores() {
+    /// 自分が作ったぶんだけを片付ける。
+    /// 起動時に他のぶんまで消すと、テストを2つ走らせたときに使用中のものを消す。
+    /// 消し残りが無いことをファイルの数で確かめるのは、書き戻しと競合して当てにならない。
+    @discardableResult
+    static func cleanUpTemporaryStores() -> Bool {
+        guard let name = temporaryName else { return false }
+        store = .standard
+        temporaryName = nil
         let d = UserDefaults.standard
-        if let name = temporaryName {
-            d.removePersistentDomain(forName: name)
-            temporaryName = nil
-        }
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences")
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
-            return
-        }
-        for f in files where f.hasPrefix(testPrefix) && f.hasSuffix(".plist") {
-            d.removePersistentDomain(forName: String(f.dropLast(6)))
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
-        }
+        d.removePersistentDomain(forName: name)
+        d.synchronize()
+        let f = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(name).plist")
+        try? FileManager.default.removeItem(at: f)
+        return true
     }
 
     /// 本物の設定を使っていないこと。書き換える側のテストはこれを確かめてから動く。

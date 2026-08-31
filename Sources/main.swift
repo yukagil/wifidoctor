@@ -74,19 +74,27 @@ if CommandLine.arguments.contains("--roamtest") {
     exit(0)
 }
 
+/// テストが使った一時的な置き場所は、最後に一度だけ片付ける。
+/// 途中で片付けると、以降のテストが本物のデータと設定を触る。
+func finishTests(_ code: Int32) -> Never {
+    SampleLog.cleanUpTemporaryDirectory()
+    Settings.cleanUpTemporaryStores()
+    exit(code)
+}
+
 if CommandLine.arguments.contains("--test") {
     let a = SelfTest.run()
     print("")
     let b = UITest.run()
-    exit(Int32(a + b == 0 ? 0 : 1))
+    finishTests(Int32(a + b == 0 ? 0 : 1))
 }
 
 if CommandLine.arguments.contains("--uitest") {
-    exit(Int32(UITest.run()))
+    finishTests(Int32(UITest.run()))
 }
 
 if CommandLine.arguments.contains("--selftest") {
-    exit(Int32(SelfTest.run()))
+    finishTests(Int32(SelfTest.run()))
 }
 
 let app = NSApplication.shared

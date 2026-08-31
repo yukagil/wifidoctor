@@ -213,7 +213,8 @@ final class ChartView: NSView {
             if x - lastLabelX > 62 {
                 // 呼び名を付けてあれば、どこへ移ったかがそのまま読める
                 let text = APNames.name(for: b) ?? "AP切替"
-                label(text, at: NSPoint(x: x + 3, y: 8 + bandH + 1), size: 8, color: .systemOrange)
+                label(text, at: NSPoint(x: x + 3, y: 8 + bandH + 1), size: 8,
+                  color: Palette.text(.fair))
                 lastLabelX = x
             }
         }
@@ -374,17 +375,17 @@ final class ChartView: NSView {
 
         row("スコア", "\(s.score) / 100")
         row("電波", "\(s.rssi) dBm（\(Phrase.signalWord(s.rssi))）",
-            s.rssi < -70 ? .systemRed : (s.rssi < -63 ? .systemOrange : .labelColor))
+            s.rssi < -70 ? Palette.text(.bad) : (s.rssi < -63 ? Palette.text(.fair) : .labelColor))
 
         if let g = s.gwRTT {
-            let t: NSColor = g > 25 ? .systemRed : (g > 12 ? .systemOrange : .labelColor)
+            let t: NSColor = g > 25 ? Palette.text(.bad) : (g > 12 ? Palette.text(.fair) : .labelColor)
             var v = String(format: "%.1f ms", g)
             if let j = s.gwJitter { v += String(format: " ±%.1f", j) }
             if let l = s.gwLoss, l > 0 { v += String(format: " 損失%.0f%%", l) }
             row("自分→AP", v, t)
         }
         if let n = s.netRTT {
-            let t: NSColor = (s.netLoss ?? 0) > 3 ? .systemRed : .labelColor
+            let t: NSColor = (s.netLoss ?? 0) > 3 ? Palette.text(.bad) : .labelColor
             var v = String(format: "%.1f ms", n)
             if let l = s.netLoss, l > 0 { v += String(format: " 損失%.0f%%", l) }
             row("インターネット", v, t)
@@ -418,6 +419,7 @@ final class ChartView: NSView {
 // MARK: - 共通の色と言葉
 
 enum Palette {
+    /// 塗りに使う色。
     static func level(_ l: Level) -> NSColor {
         switch l {
         case .good: return .systemGreen
@@ -426,6 +428,9 @@ enum Palette {
         case .offline: return .systemGray
         }
     }
+
+    /// 文字に使う色。白背景だと systemOrange/Green は明るすぎて読めない。
+    static func text(_ l: Level) -> NSColor { l.nsTextTint }
     /// 既定値を置かない。省略できるようにすると、崩れた割合を渡し忘れた場所だけ
     /// 昔の「点数だけ」の基準が生き残る。
     static func level(score: Int, badRatio: Double) -> Level {
@@ -435,7 +440,7 @@ enum Palette {
     /// 点数そのものに色を付ける。良し悪しの判定ではなく、数値の見た目のため。
     /// 「悪いとき 48点」のような、分布の裾を出すときに使う。
     static func scoreColor(_ score: Int) -> NSColor {
-        level(score >= 80 ? .good : (score >= 60 ? .fair : .bad))
+        text(score >= 80 ? .good : (score >= 60 ? .fair : .bad))
     }
     static func word(_ l: Level) -> String {
         switch l {
@@ -526,9 +531,10 @@ final class VerdictCard: NSView {
             .stroke()
 
         // 大きな点数。色だけで良し悪しが分かるようにする。
-        let c = Palette.level(level)
+        // 地の塗りと文字で濃さを分ける（白背景に明るい橙のままだと読めない）。
+        let c = Palette.text(level)
         let box = NSRect(x: 14, y: 14, width: 92, height: bounds.height - 28)
-        c.withAlphaComponent(0.12).setFill()
+        Palette.level(level).withAlphaComponent(0.12).setFill()
         NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
 
         let n = score.map { "\($0)" } ?? "—"
@@ -851,7 +857,7 @@ final class CompareRow: NSView {
                      color: .tertiaryLabelColor, mono: false)
             return
         }
-        let c = Palette.level(place.level)
+        let c = Palette.text(place.level)
         var right = rightEdge
         if let bad = place.score.bad, bad < mid - 2 {
             right -= putRight(" / \(Int(bad))", rightEdge: rightEdge, y: 16, size: 15,
@@ -864,12 +870,14 @@ final class CompareRow: NSView {
 
     /// 良し悪しの手がかりが無い数字は比較に使えない。しきい値を超えた側だけ色を付ける。
     private func tint(_ kind: CompareRow.Cell, _ v: Double) -> NSColor {
+        // 数字は文字なので、白背景で読める濃さの色を使う
+        let bad = Palette.text(.bad), warn = Palette.text(.fair), plain = NSColor.labelColor
         switch kind {
-        case .rtt:    return v > 50 ? .systemRed : (v > 25 ? .systemOrange : .labelColor)
-        case .jitter: return v > 40 ? .systemRed : (v > 20 ? .systemOrange : .labelColor)
-        case .loss:   return v > 5 ? .systemRed : (v > 1 ? .systemOrange : .labelColor)
-        case .rssi:   return v < -70 ? .systemRed : (v < -60 ? .systemOrange : .labelColor)
-        case .span:   return .labelColor
+        case .rtt:    return v > 50 ? bad : (v > 25 ? warn : plain)
+        case .jitter: return v > 40 ? bad : (v > 20 ? warn : plain)
+        case .loss:   return v > 5 ? bad : (v > 1 ? warn : plain)
+        case .rssi:   return v < -70 ? bad : (v < -60 ? warn : plain)
+        case .span:   return plain
         }
     }
 
