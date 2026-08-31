@@ -259,13 +259,19 @@ final class SampleLog {
             out += "  \(pad)\(String(format: "%4d", mins))分\n"
         }
 
-        // 画面と同じ物差しで出す。件数平均だと、測る間隔が変わったときに
-        // 短い時間の点が過大に効いて、同じ記録なのに数字が食い違う。
+        // 場所をまたいだ平均には意味がない。家のWi-Fiと会議室のAPを混ぜた数字は、
+        // どちらの話でもなくなる。全体の点数は、つないだ先が1つのときだけ出す。
         let scorePairs = zip(samples, durations).map { (Double($0.0.score), $0.1) }
-        out += String(format: "\n■ 全体の点数  ふだん %.0f点 / 悪いとき %.0f点 / 最低 %.0f点\n",
-                      PlaceReport.quantile(scorePairs, 0.5) ?? 0,
-                      PlaceReport.quantile(scorePairs, 0.10) ?? 0,
-                      samples.map { Double($0.score) }.min() ?? 0)
+        let placeCount = Set(samples.compactMap { $0.bssid }).count
+        if placeCount <= 1 {
+            out += String(format: "\n■ 点数  ふだん %.0f点 / 悪いとき %.0f点 / 最低 %.0f点\n",
+                          PlaceReport.quantile(scorePairs, 0.5) ?? 0,
+                          PlaceReport.quantile(scorePairs, 0.10) ?? 0,
+                          samples.map { Double($0.score) }.min() ?? 0)
+        } else {
+            out += "\n■ 点数  \(placeCount)か所につないでいるため、全体の平均は出しません"
+            out += "（下の場所別を見てください）\n"
+        }
 
         // 悪化していた区間だけを塊にまとめて出す(全件出すと読めない)
         // 判定は閾値の境目で振れる（例: 第一ホップが 12ms を挟んで往復すると

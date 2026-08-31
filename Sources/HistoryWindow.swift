@@ -523,10 +523,14 @@ final class VerdictCard: NSView {
     private var bad: Int?
     private var level: Level = .offline
     private var lines: [String] = []
-    func set(score: Int?, bad: Int?, level: Level, lines: [String]) {
-        self.score = score; self.bad = bad; self.level = level; self.lines = lines
+    /// - Parameter caption: 箱の下に出す一語。既定は良し悪し（快適/ふつう/遅い）。
+    ///   場所をまたいだ日は、その数字がどこのものかを書く。
+    func set(score: Int?, bad: Int?, level: Level, caption: String? = nil, lines: [String]) {
+        self.score = score; self.bad = bad; self.level = level
+        self.caption = caption; self.lines = lines
         needsDisplay = true
     }
+    private var caption: String?
     /// 動作確認から見る用。表と食い違っていないかを外から確かめられるようにしておく。
     var shownScore: Int? { score }
 
@@ -571,10 +575,11 @@ final class VerdictCard: NSView {
             put(sub, x: bx, y: box.minY + 22, size: 17,
                 color: Palette.scoreColor(bad ?? 0), mono: true)
         }
-        let word = Palette.word(level)
-        let ww = NSAttributedString(string: word, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width
-        put(word, x: box.midX - ww / 2, y: box.minY + 50, size: 11, weight: .medium, color: c)
+        let word = caption ?? Palette.word(level)
+        let ww = min(box.width - 8, NSAttributedString(string: word, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width)
+        put(word, x: box.midX - ww / 2, y: box.minY + 50, size: 11, weight: .medium,
+            color: c, maxWidth: box.width - 8)
 
         var y: CGFloat = 14
         for (i, line) in lines.enumerated() {
@@ -1434,25 +1439,50 @@ final class HistoryWindowController: NSWindowController {
         let head = where_.isEmpty
             ? ranges[max(0, rangePop.indexOfSelectedItem)].0
             : "\(ranges[max(0, rangePop.indexOfSelectedItem)].0)の \(where_)"
+
+        // 場所をまたいだ日の平均点には意味がない。
+        // 家のWi-Fiと会議室のAPを混ぜた数字は、どちらの話でもなくなる。
+        // 2か所以上つないだ日は、平均ではなく「どこが悪かったか」を出す。
+        let ranked = places.filter { $0.enough && $0.score.mid != nil }
+            .sorted { ($0.score.mid ?? 0) < ($1.score.mid ?? 0) }
+        let comparing = where_.isEmpty && ranked.count >= 2
+
         var lines = ["\(head)は \(PlaceReport.spanWord(connected))つないで、"
                      + (badSeconds < 30 ? "崩れた時間はありませんでした。"
                         : "そのうち \(PlaceReport.spanWord(badSeconds)) は崩れていました。")]
 
-        // 2行目に「いつ・どこ・なぜ」を1文で。打ち手の長文はレポート側に置く。
+        if comparing, let worst = ranked.first, let best = ranked.last {
+            lines[0] = "\(head)は \(ranked.count)か所につないで、"
+                + "合わせて \(PlaceReport.spanWord(connected))"
+                + (badSeconds < 30 ? "。崩れた時間はありませんでした。"
+                   : "のうち \(PlaceReport.spanWord(badSeconds)) が崩れていました。")
+            lines.append("いちばん悪かったのは \(worst.name)"
+                + "（\(Int(worst.score.mid ?? 0))点・\(PlaceReport.spanWord(worst.seconds))）。"
+                + worst.detail + "。")
+            lines.append("いちばん良かったのは \(best.name)（\(Int(best.score.mid ?? 0))点）。")
+            verdict.set(score: Int(worst.score.mid ?? 0),
+                        bad: worst.score.bad.map { Int($0.rounded()) },
+                        level: worst.level, caption: worst.name, lines: lines)
+            return
+        }
+
         let hours = HourReport.hours(s, by: grouping, durations: d)
-        var second: [String] = []
         if let w = HourReport.worst(hours, days: days) {
-            // 過半数を占めていない先を名指しすると、行き来していただけの場所を犯人にする。
+            // 過半数を占めていない先を「そのときつないでいた」と名指しすると、
+            // 行き来していただけの場所を犯人にしてしまう。
             let top = w.byKey.max { $0.value < $1.value }
             let who = (top.map { $0.value > w.seconds * 0.5 } ?? false)
                 ? top.flatMap { pair in places.first { $0.key == pair.key }?.name } : nil
-            second.append("いちばん悪かったのは \(w.hour)時台"
-                + (who.map { "の \($0)" } ?? "") + "（\(w.score)点）")
+            lines.append("いちばん悪かったのは \(w.hour)時台"
+                + (who.map { "の \($0)" } ?? "") + "（\(w.score)点）"
+                + (byVerdict.max(by: { $0.value < $1.value }).map {
+                    "、多くは「\($0.key.plainCause)」時間。" } ?? "。"))
+        } else if let top = byVerdict.max(by: { $0.value < $1.value }),
+                  top.value > connected * 0.1 {
+            lines.append("多くは「\(top.key.plainCause)」時間でした。")
+        } else {
+            lines.append("目立って悪い時間帯はありませんでした。")
         }
-        if let top = byVerdict.max(by: { $0.value < $1.value }), top.value > connected * 0.1 {
-            second.append("多くは「\(top.key.plainCause)」時間")
-        }
-        if !second.isEmpty { lines.append(second.joined(separator: "、") + "。") }
 
         verdict.set(score: Int(mid.rounded()), bad: low.map { Int($0.rounded()) },
                     level: Palette.level(score: Int(mid.rounded()),

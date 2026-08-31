@@ -1309,6 +1309,23 @@ enum SelfTest {
         expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
         expect(!(Settings.store is UserDefaults), "本物の UserDefaults を使っていない")
 
+        // 場所をまたいだ平均を出さないこと。
+        // 家のWi-Fiと会議室のAPを混ぜた点数は、どちらの話でもなくなる。
+        var oneAP: [Sample] = []
+        for i in 0..<120 { oneAP.append(sample(i * 5, score: 90, bssid: "aa:bb:cc:00:00:01")) }
+        expect(SampleLog().report(samples: oneAP, title: "1か所").contains("ふだん"),
+               "1か所なら全体の点数を出す")
+
+        var twoAP = oneAP
+        for i in 0..<120 {
+            twoAP.append(sample(3600 + i * 5, score: 40, verdict: .congested,
+                                bssid: "aa:bb:cc:00:00:02"))
+        }
+        let mixed = SampleLog().report(samples: twoAP, title: "2か所")
+        expect(mixed.contains("2か所につないでいるため"), "混ざっていれば平均を出さない")
+        expect(!mixed.contains("■ 点数  ふだん"), "混ざった平均を書かない")
+        expect(mixed.contains("場所別の実績"), "代わりに場所ごとを見せる")
+
         // しきい値をサイトに合わせて動かせること。
         // 集中トンネル型では第一ホップがAPではないので、12ms固定だと常に混雑になる。
         let good = PingResult(avg: 20, stddev: 2, loss: 0)
