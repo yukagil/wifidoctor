@@ -139,8 +139,12 @@ enum NetProbe {
     }
 
     /// その相手が応答を返すポートを1つ見つける。見つからなければ TCP でも測れない。
+    /// ICMP を落とすルータで、代わりに応答時間を測れるポートを探す。
+    ///
+    /// 22（SSH）や 7（echo）まで叩くと、社内の監視からはポート探索に見える。
+    /// 相手はゲートウェイなので、Web と DNS が開いていれば足りる。
     static func findTCPPort(_ host: String) -> UInt16? {
-        for p: UInt16 in [80, 443, 53, 22, 7] {
+        for p: UInt16 in [80, 443, 53] {
             if tcpConnectMS(host, p, timeout: 1.0) != nil { return p }
         }
         return nil

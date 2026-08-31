@@ -144,19 +144,25 @@ enum NetworkSwitcher {
             if c < currentCrowding { reasons.append("周りのWi-Fiが少なめ（\(c)台）") }
             if ap.rssi >= current.rssi + 8 { reasons.append("電波が強い") }
             if ap.band == 2 && current.band >= 5 { reasons.append("2.4GHz・速度は落ちるが空いている場合あり") }
-            if !ap.secure { reasons.append("パスワード不要") }
+            // 暗号化なしは「手軽」ではなく危険。名前を真似た偽のAPに一押しで
+            // つながせないよう、長所として書かないし、おすすめにも回さない。
+            let known = knownSet.contains(ssid)
+            if !ap.secure { reasons.append("暗号化なし・通信が見られる可能性があります") }
 
             // 「今より良さそう」だけを推奨に回し、それ以外も情報として残す。
             // 候補を隠しすぎると「他にもあるはずだ」という不信につながる。
             let recommended = (c < currentCrowding || ap.rssi >= current.rssi + 8)
                 && ap.rssi >= -75 && connectable && !sameDevice
+                && (known || ap.secure)
 
             out.append(NetworkCandidate(
                 ssid: ssid, rssi: ap.rssi, band: ap.band, channel: ap.channel,
                 crowding: c,
                 reason: reasons.isEmpty ? "\(ap.band)GHz" : reasons.joined(separator: " / "),
                 recommended: recommended,
-                connectable: connectable))
+                connectable: connectable,
+                secure: ap.secure,
+                known: known))
         }
 
         // 推奨 → 繋げる → 混雑の少なさ → 電波の順

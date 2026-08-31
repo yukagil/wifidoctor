@@ -130,7 +130,8 @@ final class SampleLog {
         return []
     }
 
-    /// 記録は1日あたり約5MB増える。放置すると年1.7GBになるので古いものを消す。
+    /// 記録は1日あたり1〜5MB増える（測る間隔が状態で変わるため幅がある）。
+    /// 放置すると年で数百MBになるので古いものを消す。
     static let retentionDays = 30
 
     func pruneOldLogs() {

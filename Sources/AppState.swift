@@ -140,6 +140,7 @@ final class AppState: ObservableObject {
         s.locationDenied = m.locationDenied
         s.measuring = m.verdict == .measuring
         s.scanNamesUnavailable = m.scanner.namesUnavailable
+        s.localBlocked = m.localNetworkBlocked
         s.macWarn = m.load.busy || m.ownMbps >= 8
         s.macLine = Phrase.macLine(load: m.load, ownMbps: m.ownMbps,
                                    topTalker: m.topTalkers.first?.name)
@@ -222,10 +223,19 @@ final class AppState: ObservableObject {
             PathNode(icon: "antenna.radiowaves.left.and.right", title: "Wi-Fi機器",
                      caption: l.associated ? "電波 \(Phrase.signalWord(l.rssi))" : "未接続",
                      level: apLevel),
+            // 測っていない／出られていないときに緑を出さない。
+            // 「インターネットに出られません」と書いた画面の右端が緑だと、
+            // どちらを信じればいいのか分からなくなる。
             PathNode(icon: "globe", title: "インターネット",
                      caption: nil,
-                     level: (m.wanForDisplay?.loss ?? 0) > 5 ? .bad : .good),
+                     level: internetLevel(m)),
         ]
+
+        func internetLevel(_ m: Monitor) -> Level {
+            if m.verdict == .noInternet { return .bad }
+            guard let w = m.wanForDisplay else { return .offline }   // まだ測れていない
+            return w.loss > 5 ? .bad : .good
+        }
 
         func fmt(_ v: Double?) -> String {
             guard let v else { return "測定中" }
@@ -570,6 +580,14 @@ final class AppState: ObservableObject {
         var t = String(format: "下り %.0f Mbps", d)
         if let u = r.upMbps { t += String(format: " / 上り %.0f Mbps", u) }
         return t + "（\(f.string(from: at))時点）"
+    }
+
+    /// ローカルネットワークの設定を開く。位置情報と同じく、断ると自力で戻れない。
+    func openLocalNetworkSettings() {
+        for s in ["x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_LocalNetwork",
+                  "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"] {
+            if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
+        }
     }
 
     /// 位置情報の設定を開く。許可はアプリ側からは戻せないので、場所まで案内する。

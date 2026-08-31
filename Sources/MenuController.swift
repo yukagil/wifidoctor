@@ -61,8 +61,9 @@ final class MenuController: NSObject, NSPopoverDelegate {
 
         if !Settings.store.bool(forKey: "didIntroduce") {
             Settings.store.set(true, forKey: "didIntroduce")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.showPopover()
+            // 権限の確認ダイアログと重なるので、少し待ってから出す
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                self?.introduce()
             }
         }
     }
@@ -170,6 +171,28 @@ final class MenuController: NSObject, NSPopoverDelegate {
     private func hotKeyFired() {
         showPopover()
         app.quickScan()
+    }
+
+    /// 初回だけ、何をするアプリなのかを伝える。
+    /// 常時測ることと、記録がディスクに残ることは、黙って始めてよいことではない
+    /// （README を読まない人にも届かせる）。
+    private func introduce() {
+        let a = NSAlert()
+        a.messageText = "WiFiDoctor を始めます"
+        a.informativeText =
+            "メニューバーに常駐して、Wi-Fiの調子を数秒おきに測り続けます。\n"
+            + "測った内容はこのMacの中に30日ぶん残ります（外へ送ることはありません）。\n"
+            + "\(SampleLog.dir.path)\n\n"
+            + "接続先の名前を読むために位置情報の許可を求めます。\n"
+            + "断っても動きますが、場所ごとの比較はできません。"
+        a.addButton(withTitle: "始める")
+        a.addButton(withTitle: "終了する")
+        NSApp.activate(ignoringOtherApps: true)
+        if a.runModal() == .alertSecondButtonReturn {
+            NSApp.terminate(nil)
+            return
+        }
+        showPopover()
     }
 
     /// 設定に従ってホットキーを登録・解除する。

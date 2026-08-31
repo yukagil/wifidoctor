@@ -247,14 +247,14 @@ struct BigButtonStyle: ButtonStyle {
 
 // MARK: - ホーム
 
-/// 位置情報が無いことを伝える1行。押すと設定まで飛ぶ。
+/// 許可が足りないことを伝える1行。押すと設定まで飛ぶ。
 /// 説明だけ置くと、読んだ人が自分でパスを辿ることになる（そして辿れない）。
-struct LocationNotice: View {
-    @ObservedObject var app: AppState
+struct PermissionNotice: View {
     var text: String
+    var open: () -> Void
 
     var body: some View {
-        Button(action: { app.openLocationSettings() }) {
+        Button(action: open) {
             HStack(spacing: 6) {
                 Image(systemName: "location.slash").font(.system(size: 11))
                 Text(text).font(.system(size: 11))
@@ -283,7 +283,12 @@ struct HomeView: View {
             // macOSは許可の確認を一度しか出さないので、断った人は自力で戻れない。
             // 色や絵では伝えられないので、ここだけは文と導線を置く。
             if snap.locationDenied {
-                LocationNotice(app: app, text: "位置情報の許可が無いため、接続先を識別できません")
+                PermissionNotice(text: "位置情報の許可が無いため、接続先を識別できません",
+                                 open: { app.openLocationSettings() })
+            } else if snap.localBlocked {
+                // 第一ホップだけが全部落ちている。経路ではなく許可の問題。
+                PermissionNotice(text: "ローカルネットワークの許可が無いため、Wi-Fi機器を測れません",
+                                 open: { app.openLocalNetworkSettings() })
             }
 
             // 状態の一言 + スコア
@@ -508,8 +513,8 @@ struct SwitchingView: View {
 
                     if app.snap.locationDenied {
                         // 説明だけ置いて袋小路にしない。押せば設定まで飛ぶ。
-                        LocationNotice(app: app,
-                                       text: "位置情報の許可が無いため、近くのWi-Fiを調べられません")
+                        PermissionNotice(text: "位置情報の許可が無いため、近くのWi-Fiを調べられません",
+                                         open: { app.openLocationSettings() })
                     } else if app.snap.candidates.isEmpty {
                         let t = Phrase.noCandidates(
                             locationDenied: false,
@@ -585,7 +590,19 @@ private struct CandidateRow: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: { if c.connectable { action() } }) {
+        Button(action: {
+            guard c.connectable else { return }
+            // 名前を真似た偽のAPと本物は、この一覧では見分けが付かない。
+            // 一度も繋いだことのない暗号化なしのWi-Fiには、押す前に一度止める。
+            guard c.needsCaution else { action(); return }
+            let a = NSAlert()
+            a.messageText = "「\(c.ssid)」は暗号化されていません"
+            a.informativeText = "通信の内容が第三者に見える可能性があります。"
+                + "名前が同じでも、別の機器かもしれません。"
+            a.addButton(withTitle: "接続する")
+            a.addButton(withTitle: "やめる")
+            if a.runModal() == .alertFirstButtonReturn { action() }
+        }) {
             HStack(spacing: 9) {
                 Image(systemName: c.connectable ? "wifi" : "lock.fill")
                     .font(.system(size: 12))
@@ -1027,8 +1044,8 @@ struct NamingView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             if app.snap.locationDenied {
-                                LocationNotice(app: app,
-                                               text: "位置情報の許可が無いため、どのAPかを識別できません")
+                                PermissionNotice(text: "位置情報の許可が無いため、どのAPかを識別できません",
+                                                 open: { app.openLocationSettings() })
                             } else {
                                 Text(Phrase.cannotName(locationDenied: false))
                                     .font(.system(size: 11))

@@ -150,6 +150,16 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    /// 経路の相手には届いているのに、こちらの計測だけが全部落ちている状態。
+    /// macOS 15 以降のローカルネットワークの許可を断るとこうなり、
+    /// 「Wi-Fiが壊れている」という表示のまま自力で戻れない。
+    var localNetworkBlocked: Bool {
+        guard link.associated, gatewayIP != nil else { return false }
+        // 第一ホップが全損なのに、その先には出られている＝経路ではなく許可の問題
+        guard let g = gw, g.loss >= 100 else { return false }
+        return (wanForDisplay?.loss ?? 100) < 100
+    }
+
     /// 位置情報が無くて接続先を識別できていないか。
     ///
     /// 状態だけで判定すると取りこぼす。管理された Mac では位置情報サービス自体が
@@ -324,11 +334,16 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         let known = gatewayIP
         let iface = LinkSampler.interfaceName
         let wantProcs = fastMode || load.busy
+        let port = gwTCPPort
+        let streak = icmpFailStreak
         DispatchQueue.global().async {
             // Wi-Fi インターフェースに限定して引く。VPN が既定経路を持っていても
             // 「自分 → Wi-Fi機器」を測れる。
             let ip = known ?? NetProbe.defaultGateway(interface: iface)
-            let g = ip.map { self.measureFirstHop($0, count: 5) }
+            let hop = ip.map {
+                Monitor.measureFirstHop($0, count: 5, port: port, failStreak: streak)
+            }
+            let g = hop?.result
             let c = NetProbe.counters(LinkSampler.interfaceName)
             // 画面を開いている間、または逼迫しているときだけアプリ一覧まで取る
             let load = SystemLoad.read(includeProcesses: wantProcs)
@@ -344,6 +359,12 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 self.routeChecked = true
                 self.gw = g
                 if let g { self.gwHistory.append(g); if self.gwHistory.count > 3 { self.gwHistory.removeFirst() } }
+                // 計測方式の更新は main で戻す。背景で書くと、経路が変わったときの
+                // 初期化（tickWAN の完了ブロック）と競合する。
+                if let hop, ip == self.gatewayIP {
+                    self.gwTCPPort = hop.port
+                    self.icmpFailStreak = hop.failStreak
+                }
                 self.probing = false
                 self.recompute()
                 self.updateStability()
@@ -367,21 +388,35 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
 
     /// 第一ホップの計測。ICMPが通らない機器では TCP の接続時間に切り替える。
     /// これをやらないと、ICMPを落とすルータの下で永久に「混雑」と誤判定してしまう。
-    private func measureFirstHop(_ ip: String, count: Int) -> PingResult {
-        if let port = gwTCPPort {
-            return NetProbe.tcpPing(ip, port: port, count: count)
+    /// 第一ホップの計測の結果と、計測方式の更新分。
+    /// 背景で走るので、状態を直接触らずに「どう変わったか」を持ち帰る。
+    struct FirstHop {
+        var result: PingResult
+        var port: UInt16?       // TCP に切り替えたなら、そのポート
+        var failStreak: Int     // ICMP が通らなかった連続回数
+    }
+
+    /// 第一ホップの計測。ICMPが通らない機器では TCP の接続時間に切り替える。
+    /// これをやらないと、ICMPを落とすルータの下で永久に「混雑」と誤判定してしまう。
+    ///
+    /// 背景キューから呼ぶので、`self` の可変状態は読み書きしない。
+    /// 触ると main 側の書き込み（経路が変わったときの初期化）と競合する。
+    static func measureFirstHop(_ ip: String, count: Int,
+                                port: UInt16?, failStreak: Int) -> FirstHop {
+        if let port {
+            return FirstHop(result: NetProbe.tcpPing(ip, port: port, count: count),
+                            port: port, failStreak: failStreak)
         }
         let r = NetProbe.ping(ip, count: count, interval: 0.2)
         if r.loss >= 100 {
-            icmpFailStreak += 1
-            if icmpFailStreak >= 3, let port = NetProbe.findTCPPort(ip) {
-                gwTCPPort = port
-                return NetProbe.tcpPing(ip, port: port, count: count)
+            let streak = failStreak + 1
+            if streak >= 3, let p = NetProbe.findTCPPort(ip) {
+                return FirstHop(result: NetProbe.tcpPing(ip, port: p, count: count),
+                                port: p, failStreak: streak)
             }
-        } else {
-            icmpFailStreak = 0
+            return FirstHop(result: r, port: nil, failStreak: streak)
         }
-        return r
+        return FirstHop(result: r, port: nil, failStreak: 0)
     }
 
     /// 回線を埋めているプロセスを調べる。nettop は数秒かかるので、

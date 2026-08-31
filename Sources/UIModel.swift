@@ -93,6 +93,9 @@ struct SpeedRecord: Identifiable {
 
 /// 乗り換え候補のWi-Fi。
 struct NetworkCandidate: Identifiable {
+    /// 一度も繋いだことがなく、暗号化もされていない。
+    /// 名前を真似た偽のAPでも同じに見えるので、押す前に一度止める。
+    var needsCaution: Bool { !secure && !known }
     var id: String { ssid }
     var ssid: String
     var rssi: Int
@@ -102,6 +105,8 @@ struct NetworkCandidate: Identifiable {
     var reason: String
     var recommended: Bool   // 今より良くなりそうか
     var connectable: Bool   // 既知 or オープン＝ワンタップで繋げるか
+    var secure: Bool = true // 暗号化されているか
+    var known: Bool = false // 一度でも繋いだことがあるか
 }
 
 /// 主ボタンが何をするか。原因によって「効く手」が違うので、ボタン自体を差し替える。
@@ -179,6 +184,9 @@ struct Snapshot {
     var locationDenied = false
     /// まだ一度も測れていない。「切れている」とは違う。
     var measuring = false
+    /// 経路上のどこにも届かない状態が続いている。
+    /// ローカルネットワークの許可を断ると、ping も TCP も落ちてこうなる。
+    var localBlocked = false
     /// スキャンはできるのに、どのWi-Fiかの名前が取れない。
     /// 署名に wifi-info の権限が無いとこうなる。切替候補が構造的に空になる。
     var scanNamesUnavailable = false
@@ -410,7 +418,9 @@ enum Phrase {
     /// 区間の健全度。しきい値は判定ロジック(Scorer)と揃えてある。
     static func segLevel(ms: Double?, jitter: Double?, loss: Double?,
                          badMS: Double, fairMS: Double) -> Level {
-        guard let ms else { return .fair }
+        // 測っていない区間を橙（やや遅い）で塗ると、値が「測定中」なのに
+        // 語だけ「やや遅い」になって同じ列で矛盾する。分からないものは灰色で出す。
+        guard let ms else { return .offline }
         if (loss ?? 0) > 5 || ms > badMS || (jitter ?? 0) > 15 { return .bad }
         if (loss ?? 0) > 1 || ms > fairMS || (jitter ?? 0) > 6 { return .fair }
         return .good
