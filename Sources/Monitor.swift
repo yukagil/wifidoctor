@@ -205,7 +205,12 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 self.recompute(); self.onUpdate?()
             }
 
-        gatewayIP = NetProbe.defaultGateway(interface: LinkSampler.interfaceName)
+        // route は最大3秒かかる。起動時に main で待つと、その間メニューバーが固まる。
+        let iface = LinkSampler.interfaceName
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ip = NetProbe.defaultGateway(interface: iface)
+            DispatchQueue.main.async { self.gatewayIP = ip }
+        }
         tickLink()
         // 起動時に一度だけスキャンしておく。最初にパネルを開いた時点で
         // 乗り換え候補を出せるようにするため。
@@ -323,7 +328,11 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         better  = scanner.betterAP(than: l)
         // 経路が引けているかどうかは判定の前提条件。まだ一度も調べていない起動直後は
         // 「経路あり」とみなして測定中扱いにする。
-        let hasRoute = gatewayIP != nil || !routeChecked
+        // IPv4 の既定経路が無くても、IPv6 だけで通じている網（NAT64 など）はある。
+        // 経路が引けないことだけを根拠に「外に出られない」と言わない。
+        // 実際に外へ届いているなら、それが答え。
+        let reachable = (wanForDisplay?.loss ?? 100) < 100 || (dnsMS != nil)
+        let hasRoute = gatewayIP != nil || !routeChecked || reachable
         score   = Scorer.score(link: l, gw: g, net: n, dns: dnsMS, hasGateway: hasRoute)
         verdict = Scorer.verdict(link: l, gw: g, net: n, dns: dnsMS,
                                  better: better, rssiDrop: rssiDrop, betterStreak: betterStreak,
@@ -491,7 +500,8 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     /// 自動スキャンは「電波が弱い or 既に問題判定」のときだけ。通話を壊さないための制限。
     private func autoScan() {
         guard link.associated else { return }
-        guard link.rssi < -63 || verdict.isProblem else { return }
+        guard Double(link.rssi) < Settings.Thresholds.scanRSSI || verdict.isProblem
+        else { return }
         rescan()
     }
 

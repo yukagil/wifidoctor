@@ -54,6 +54,29 @@ enum Settings {
         }
     }
 
+    /// 判定のしきい値。
+    ///
+    /// 固定値は環境を選ぶ。集中トンネル型（AP→コントローラ→コア）では
+    /// 第一ホップがAPではないので平常時でも12msを超えるし、
+    /// 最小RSSIを入れた高密度設計では -68dBm はセル端の正常値になる。
+    /// サイトに合わせて動かせるようにしておく。
+    enum Thresholds {
+        private static func value(_ key: String, _ fallback: Double) -> Double {
+            guard let v = store.object(forKey: key) as? Double, v.isFinite else { return fallback }
+            return v
+        }
+        /// 第一ホップがこれを超えたら「電波は良いのに遅い」と見る（ミリ秒）
+        static var gwRTT: Double { value("thresholdGatewayMS", 12) }
+        /// 第一ホップのゆらぎ（ミリ秒）
+        static var gwJitter: Double { value("thresholdJitterMS", 6) }
+        /// 第一ホップのとりこぼし（%）
+        static var gwLoss: Double { value("thresholdLossPercent", 2) }
+        /// これを下回ったら電波が弱いと見る（dBm）
+        static var weakRSSI: Double { value("thresholdWeakRSSI", -68) }
+        /// この強さを下回ったら、周りを見に行く（dBm）
+        static var scanRSSI: Double { value("thresholdScanRSSI", -63) }
+    }
+
     /// 窓の位置の保存名。テスト中は保存させない（利用者が調整したサイズを潰すため）。
     static func windowAutosaveName(_ base: String) -> String? {
         isTemporary ? nil : base

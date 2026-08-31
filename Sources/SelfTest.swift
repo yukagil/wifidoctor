@@ -1309,6 +1309,27 @@ enum SelfTest {
         expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
         expect(!(Settings.store is UserDefaults), "本物の UserDefaults を使っていない")
 
+        // しきい値をサイトに合わせて動かせること。
+        // 集中トンネル型では第一ホップがAPではないので、12ms固定だと常に混雑になる。
+        let good = PingResult(avg: 20, stddev: 2, loss: 0)
+        eq(Scorer.verdict(link: link(), gw: good, net: PingResult(avg: 30, stddev: 2, loss: 0),
+                          dns: 20, better: nil), .congested,
+           "既定では20msを混雑と見る")
+        Settings.store.set(40.0, forKey: "thresholdGatewayMS")
+        eq(Scorer.verdict(link: link(), gw: good, net: PingResult(avg: 30, stddev: 2, loss: 0),
+                          dns: 20, better: nil), .ok,
+           "しきい値を上げれば同じ値でも混雑と見ない")
+        Settings.store.removeObject(forKey: "thresholdGatewayMS")
+        eq(Settings.Thresholds.gwRTT, 12, "外せば既定に戻る")
+
+        // 混雑と言うからには根拠が要る。見えていないなら断定しない。
+        let saidNone = Phrase.sublineForPlace(.congested, usableAPs: 3, vpn: nil,
+                                              caps: [], coChannel: 0)
+        expect(saidNone.contains("見当たりません"), "同じチャンネルに他が無ければそう言う")
+        let saidMany = Phrase.sublineForPlace(.congested, usableAPs: 3, vpn: nil,
+                                              caps: [], coChannel: 4)
+        expect(saidMany.contains("4台"), "見えている台数を根拠として出す")
+
         // 管理側から止められること。既定は使える、明示的に false のときだけ止まる。
         expect(Settings.Managed.allowsNetworkChange, "既定では端末の操作を許す")
         expect(Settings.Managed.allowsOpenNetworks, "既定では暗号化なしも候補に出す")

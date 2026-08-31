@@ -91,6 +91,20 @@ Wi-Fiが遅いときに、**どこが原因かを切り分けて、打てる手�
 | `allowNetworkChange` | つなぎ直し（Wi-Fiの電源を入れ直す）と、別のWi-Fiへの切り替え |
 | `allowOpenNetworks` | 暗号化なしのWi-Fiを候補として出すこと |
 
+**判定のしきい値を site に合わせる**
+
+同じドメインに数値（実数）で入れる。集中トンネル型（AP→コントローラ→コア）では
+第一ホップがAPではないので、既定の12msだと平常時から「混雑」と出る。
+最小RSSIを入れた高密度設計では -68dBm はセル端の正常値になる。
+
+| キー | 既定 | 意味 |
+| --- | --- | --- |
+| `thresholdGatewayMS` | 12 | これを超えたら「電波は良いのに遅い」と見る |
+| `thresholdJitterMS` | 6 | 第一ホップのゆらぎ |
+| `thresholdLossPercent` | 2 | 第一ホップのとりこぼし |
+| `thresholdWeakRSSI` | -68 | これを下回ったら電波が弱いと見る |
+| `thresholdScanRSSI` | -63 | この強さを下回ったら周りを見に行く（スキャンの頻度に効く） |
+
 **端末に残るもの**
 
 `~/Library/Application Support/WiFiDoctor/` に30日。BSSID と時刻が入るため、

@@ -550,28 +550,31 @@ final class VerdictCard: NSView {
         // 大きな点数。色だけで良し悪しが分かるようにする。
         // 地の塗りと文字で濃さを分ける（白背景に明るい橙のままだと読めない）。
         let c = Palette.text(level)
-        let box = NSRect(x: 14, y: 12, width: 96, height: bounds.height - 24)
+        let box = NSRect(x: 14, y: 12, width: 104, height: bounds.height - 24)
         Palette.level(level).withAlphaComponent(0.12).setFill()
         NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
 
-        // 箱の中は中央に揃える。行数から逆算して置き、はみ出させない。
-        func centered(_ t: String, _ y: CGFloat, _ size: CGFloat,
-                      _ weight: NSFont.Weight, _ color: NSColor, mono: Bool = false) {
-            let f = mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-                         : NSFont.systemFont(ofSize: size, weight: weight)
-            let w = NSAttributedString(string: t, attributes: [.font: f]).size().width
-            put(t, x: box.midX - w / 2, y: y, size: size, weight: weight, color: color, mono: mono)
-        }
-
+        // 下の行と同じ形にする。「ふだん」「悪いとき」と言葉を足すほど、
+        // 何の数字なのかが遠くなる。数字の形（93 / 73）と、良し悪しの一語で足りる。
         let hasBad = bad != nil && score != nil && (bad ?? 0) < (score ?? 0) - 2
-        var by = box.minY + (hasBad ? 6 : 14)
-        centered(score.map { "\($0)" } ?? "—", by, 30, .semibold, c, mono: true)
-        by += 35
-        centered("ふだん \(Palette.word(level))", by, 11, .medium, c)
-        if hasBad, let bad {
-            by += 15
-            centered("悪いとき \(bad)点", by, 10, .regular, Palette.scoreColor(bad))
+        let main = score.map { "\($0)" } ?? "—"
+        let sub = hasBad ? " / \(bad ?? 0)" : ""
+        let mainFont = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
+        let subFont = NSFont.monospacedDigitSystemFont(ofSize: 17, weight: .regular)
+        let mw = NSAttributedString(string: main, attributes: [.font: mainFont]).size().width
+        let sw = sub.isEmpty ? 0
+            : NSAttributedString(string: sub, attributes: [.font: subFont]).size().width
+        var bx = box.midX - (mw + sw) / 2
+        put(main, x: bx, y: box.minY + 12, size: 30, weight: .semibold, color: c, mono: true)
+        bx += mw
+        if !sub.isEmpty {
+            put(sub, x: bx, y: box.minY + 22, size: 17,
+                color: Palette.scoreColor(bad ?? 0), mono: true)
         }
+        let word = Palette.word(level)
+        let ww = NSAttributedString(string: word, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width
+        put(word, x: box.midX - ww / 2, y: box.minY + 50, size: 11, weight: .medium, color: c)
 
         var y: CGFloat = 14
         for (i, line) in lines.enumerated() {
@@ -1136,7 +1139,7 @@ final class HistoryWindowController: NSWindowController {
             // 子の幅をスタックに合わせた以上、横幅を押し広げるものが無くなる。
             // 下限を置かないと折り返しラベルが縦に伸びきって、窓ごと細長く潰れる。
             stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 820),
-            verdict.heightAnchor.constraint(equalToConstant: 104),
+            verdict.heightAnchor.constraint(equalToConstant: 96),
             hourStrip.heightAnchor.constraint(equalToConstant: 154),
             // スクロールの中身は、自分で clip view に留めないと位置も幅も決まらない。
             // 高さだけは行の積み上げに任せる（それがスクロール量になる）。

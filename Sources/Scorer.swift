@@ -88,8 +88,12 @@ enum Scorer {
         // 再接続直後は測定値を捨てるので、必ずここを通る。
         guard gw != nil else { return .measuring }
 
-        let gwBad = (gw?.avg ?? 0) > 12 || (gw?.stddev ?? 0) > 6 || (gw?.loss ?? 0) > 2
-        let signalWeak = link.rssi < -68 || (link.snr.map { $0 < 22 } ?? false)
+        // しきい値はサイトごとに動かせる（Settings.Thresholds）。
+        // 既定は一般的なオフィスのWi-Fiに合わせてある。
+        let t = Settings.Thresholds.self
+        let gwBad = (gw?.avg ?? 0) > t.gwRTT || (gw?.stddev ?? 0) > t.gwJitter
+                    || (gw?.loss ?? 0) > t.gwLoss
+        let signalWeak = Double(link.rssi) < t.weakRSSI || (link.snr.map { $0 < 22 } ?? false)
 
         // 1) リンクが弱い → 乗り換え先があるなら sticky、無ければ単に遠い
         if signalWeak {

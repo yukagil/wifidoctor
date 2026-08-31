@@ -168,7 +168,6 @@ struct Snapshot {
     var score: Int = 0
     var headline: String = "確認中…"
     var subline: String = ""
-    var hint: String?              // 次に取るべき行動（1文）
     var network: String?           // SSID
     var apShort: String?           // 表示名（付けていなければ短縮ID）
     var apNamed = false            // 利用者が名前を付けているか
@@ -322,8 +321,10 @@ enum Phrase {
     /// 「直らない理由」を伝えるほうが役に立つ。
     /// 状況によってリード文を差し替える。
     /// 別枠のヒントを出すと画面が重くなるので、説明はリード文1か所に集約する。
+    /// - Parameter coChannel: 同じチャンネルに見えている他のAPの数。
+    ///   -1 はまだ数えていない。混雑と言うからには、その根拠が要る。
     static func sublineForPlace(_ v: Verdict, usableAPs: Int, vpn: String?,
-                                caps: [Capability]) -> String {
+                                caps: [Capability], coChannel: Int = -1) -> String {
         // 0台は「1台しかない」ではなく「まだ数えていない」。
         // スキャン前に構造的な混雑だと言い切ると、後で覆る。
         if v == .congested, usableAPs == 1 {
@@ -336,6 +337,13 @@ enum Phrase {
         }
         if (v == .isp || v == .dns), vpn != nil {
             return "VPN経由のため、この遅延にはVPNの往復も含まれます"
+        }
+        // 「混雑」と言えるのは、電波を分け合う相手が実際に見えているときだけ。
+        // 見えていないなら、遅いのは事実でも原因は特定できていない。
+        if v == .congested, coChannel >= 0 {
+            return coChannel == 0
+                ? "同じチャンネルに他のWi-Fiは見当たりません。AP側の負荷か、その先が原因かもしれません"
+                : "同じチャンネルに他のWi-Fiが\(coChannel)台。電波の順番待ちが起きています"
         }
         return v == .ok ? okSubline(caps) : subline(v)
     }

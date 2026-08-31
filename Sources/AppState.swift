@@ -172,7 +172,9 @@ final class AppState: ObservableObject {
             peakRx: li.peakRx, peakTx: li.peakTx, bloat: li.bloat)
         // リード文は必ず capabilities から導く（別々に書くと食い違うため）
         s.subline = Phrase.sublineForPlace(m.verdict, usableAPs: s.usableAPs,
-                                           vpn: s.vpn, caps: s.capabilities)
+                                           vpn: s.vpn, caps: s.capabilities,
+                                           coChannel: m.scanner.lastScanAt == nil ? -1
+                                               : m.scanner.coChannelCount(l))
         // 距離そのものは測れないが「同じAPのまま電波が落ちた」量は分かる。
         // 移動して置いていかれた証拠になるので、通常のリード文より優先して出す。
         // 回線を埋めている犯人が分かっているなら名指しする

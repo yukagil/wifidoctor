@@ -61,7 +61,9 @@ enum Verdict: String, Codable, CaseIterable {
         }
     }
 
-    /// メニューに出す具体的な打ち手。
+    /// 判定ごとの打ち手を、文章として1か所に置いたもの。
+    /// 画面には `Phrase.hint` / `Phrase.notice` の短い言い回しを出しており、
+    /// ここは詳しい説明が要る場面（将来の書き出しや案内）のための原文。
     var advice: String {
         switch self {
         case .ok:        return "問題ありません。"

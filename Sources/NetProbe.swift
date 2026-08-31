@@ -217,7 +217,9 @@ enum NetProbe {
         for line in out.split(separator: "\n") {
             let f = line.split(separator: " ", omittingEmptySubsequences: true)
             // 総計は <Link#n> の行にだけ載る（アドレスファミリごとの行は部分値）
-            guard f.count >= 10, f[0] == iface, f[2].hasPrefix("<Link") else { continue }
+            // Address 欄が空だと列が1つ減り、f[6]/f[9] が別の値（Opkts/Coll）になる。
+            // 列数をちょうどで見て、取り違えないようにする。
+            guard f.count == 11, f[0] == iface, f[2].hasPrefix("<Link") else { continue }
             guard let rx = UInt64(f[6]), let tx = UInt64(f[9]) else { continue }
             return IfCounters(rx: rx, tx: tx, at: Date())
         }

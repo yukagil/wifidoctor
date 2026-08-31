@@ -50,7 +50,6 @@ enum UITest {
         s.level = Phrase.level(score: v == .ok ? 92 : 45, verdict: v)
         s.score = v == .ok ? 92 : 45
         s.headline = Phrase.headline(v)
-        s.hint = Phrase.hint(v)
         s.network = longText ? "very-long-corporate-network-name-2024" : "net"
         s.apShort = "B14170"
         s.apSince = Date().addingTimeInterval(-1234)
