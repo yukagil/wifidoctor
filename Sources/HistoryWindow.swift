@@ -53,6 +53,14 @@ final class ChartView: NSView {
 
     /// 体感を決める順に並べる。
     /// 平均遅延が良くてもジッタと損失が悪ければ会議は乱れるので、その2つを独立して見せる。
+    /// 系列の色。良し悪しを表す緑/橙/赤は使わない（同じ色が2つの意味を持つと読めない）。
+    /// 「自分→AP」と「インターネット」は経路の区間なので、どの系列でも同じ色に固定する。
+    private enum Ink {
+        static let toAP: NSColor = .systemBlue        // 自分 → Wi-Fi機器
+        static let toNet: NSColor = .systemPurple     // その先
+        static let value: NSColor = .systemTeal       // 区間に属さない単独の値
+    }
+
     private var series: [Series] {
         let rttHi = upper(samples.compactMap { $0.gwRTT } + samples.compactMap { $0.netRTT },
                           floor: 30, cap: 500)
@@ -67,34 +75,34 @@ final class ChartView: NSView {
                    note: "低いほど良い",
                    lo: 0, hi: rttHi,
                    lines: [
-                    Line(title: "自分→AP", color: .systemRed, value: { $0.gwRTT }),
-                    Line(title: "インターネット", color: .systemPurple, value: { $0.netRTT }),
+                    Line(title: "自分→AP", color: Ink.toAP, value: { $0.gwRTT }),
+                    Line(title: "インターネット", color: Ink.toNet, value: { $0.netRTT }),
                    ], fmt: ms),
 
             Series(title: "ゆらぎ（ms）",
                    note: "会議の音声が途切れる主因",
                    lo: 0, hi: jitHi,
-                   lines: [Line(title: "ゆらぎ", color: .systemOrange, value: { $0.gwJitter })],
+                   lines: [Line(title: "ゆらぎ", color: Ink.toAP, value: { $0.gwJitter })],
                    fmt: ms),
 
             Series(title: "とりこぼし（%）",
                    note: "0%が正常",
                    lo: 0, hi: lossHi,
                    lines: [
-                    Line(title: "自分→AP", color: .systemRed, value: { $0.gwLoss }),
-                    Line(title: "インターネット", color: .systemPurple, value: { $0.netLoss }),
+                    Line(title: "自分→AP", color: Ink.toAP, value: { $0.gwLoss }),
+                    Line(title: "インターネット", color: Ink.toNet, value: { $0.netLoss }),
                    ], fmt: ms),
 
             Series(title: "電波の強さ（dBm）",
                    note: "遅さの原因側の指標",
                    lo: -90, hi: -30,
-                   lines: [Line(title: "RSSI", color: .systemBlue, value: { Double($0.rssi) })],
+                   lines: [Line(title: "電波", color: Ink.value, value: { Double($0.rssi) })],
                    fmt: ms),
 
             Series(title: "リンク速度（Mbps）",
                    note: "規格上の接続速度。実効スループットではない",
                    lo: 0, hi: mbpsHi,
-                   lines: [Line(title: "リンク", color: .systemGreen, value: { $0.txRate })],
+                   lines: [Line(title: "リンク", color: Ink.value, value: { $0.txRate })],
                    fmt: ms),
         ]
     }

@@ -439,7 +439,7 @@ enum Phrase {
             guard let v else { return "測定中" }
             return String(format: "%.0f%@", v, unit)
         }
-        let basisLine = "遅延 \(fmt(rtt, "ms")) / ゆらぎ \(fmt(jitter, "ms")) / 損失 \(fmt(loss, "%"))"
+        let basisLine = "応答 \(fmt(rtt, "ms")) / ゆらぎ \(fmt(jitter, "ms")) / とりこぼし \(fmt(loss, "%"))"
 
         // --- 安定性で決まるもの（常時計測できる）---
         var m = meetingLevel(rtt: rtt, jitter: jitter, loss: loss)

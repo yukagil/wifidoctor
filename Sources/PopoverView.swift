@@ -45,13 +45,13 @@ private struct NodeChip: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(node.level.tint.opacity(normal ? 0.32 : 0.55), lineWidth: 1)
                 Image(systemName: node.icon)
-                    .font(.system(size: 18))
+                    .font(.system(size: 19))
                     .foregroundStyle(node.level.textTint)
             }
             .frame(width: 46, height: 40)
 
             Text(node.title)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             Text(node.caption ?? " ")
@@ -195,7 +195,7 @@ struct MiniTrend: View {
 
                     // 「今」の目印と重なる目盛りラベルは出さない
                     if h % 6 == 0, abs(tx - x(now)) > 14 {
-                        var text = ctx.resolve(Text("\(h)").font(.system(size: 8)))
+                        var text = ctx.resolve(Text("\(h)").font(.system(size: 9)))
                         text.shading = .color(.secondary)
                         ctx.draw(text, at: CGPoint(x: tx, y: barH + 6), anchor: .center)
                     }
@@ -207,7 +207,7 @@ struct MiniTrend: View {
                     p.move(to: CGPoint(x: nx, y: -1))
                     p.addLine(to: CGPoint(x: nx, y: barH + 1))
                 }, with: .color(.primary), lineWidth: 1.5)
-                var nowLabel = ctx.resolve(Text("今").font(.system(size: 8, weight: .bold)))
+                var nowLabel = ctx.resolve(Text("今").font(.system(size: 9, weight: .bold)))
                 nowLabel.shading = .color(.primary)
                 ctx.draw(nowLabel,
                          at: CGPoint(x: min(max(6, nx), size.width - 6), y: barH + 6),
@@ -217,9 +217,9 @@ struct MiniTrend: View {
 
             HStack(spacing: 0) {
                 Text("\(window(now: Date()).startHour):00")
-                    .font(.system(size: 8.5)).foregroundStyle(.secondary)
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
                 Spacer()
-                Text("24:00").font(.system(size: 8.5)).foregroundStyle(.secondary)
+                Text("24:00").font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }
     }
@@ -299,14 +299,14 @@ struct HomeView: View {
                 // 文字数で高さが変わるとパネル全体がガタつくので、常に2行ぶん確保する
                 VStack(alignment: .leading, spacing: 2) {
                     Text(snap.headline)
-                        .font(.system(size: 15.5, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)   // 切るより縮めて全部見せる
                         // 縮小されると行の高さも変わるので、枠は固定しておく
                         .frame(height: 20, alignment: .leading)
                     // 操作の結果もここに出す。別枠を立てると画面が重くなる。
                     Text(app.flash ?? snap.subline)
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 11))
                         .foregroundStyle(app.flash != nil ? Color.accentColor : Color.secondary)
                         .lineLimit(2)
                         .frame(height: 30, alignment: .topLeading)
@@ -336,7 +336,7 @@ struct HomeView: View {
                         .minimumScaleFactor(0.7)   // 100点でも切らない
                         .frame(height: 26)
                     Text("スコア")
-                        .font(.system(size: 8))
+                        .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
                 .frame(width: PanelMetrics.scoreWidth)
@@ -359,22 +359,22 @@ struct HomeView: View {
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                     Text(net)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
                     if let ap = snap.apShort {
                         Text("・\(ap)")
-                            .font(.system(size: 9.5))
+                            .font(.system(size: 9))
                             .foregroundStyle(snap.apNamed ? Color.primary : Color.secondary)
                             .lineLimit(1)
                     }
                     if let since = snap.apSince {
                         Text("・\(Phrase.durationWord(since))接続中")
-                            .font(.system(size: 9.5))
+                            .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Image(systemName: "pencil.circle")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.tint)
                     Spacer(minLength: 0)
                 }
@@ -382,7 +382,7 @@ struct HomeView: View {
                 .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(snap.apNamed ? "呼び名を変える" : "この機器に呼び名を付ける")
+                .help(snap.apNamed ? "呼び名を変える" : "このWi-Fi機器に呼び名を付ける")
                 .padding(.horizontal, 16)
                 .padding(.bottom, 4)
             }
@@ -394,11 +394,11 @@ struct HomeView: View {
                         .font(.system(size: 9))
                         .foregroundStyle(snap.macWarn ? Level.fair.textTint : Color.secondary)
                     Text(snap.macLine)
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(snap.macWarn ? Level.fair.textTint : Color.secondary)
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 7))
+                        .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                     Spacer(minLength: 0)
                 }
@@ -429,6 +429,8 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 14)
 
+            // 記録が無い日も帯は出す。空だと寂しいが、状態で高さが変わる方が悪い
+            // （パネルが伸び縮みすると、押そうとしたものが動く）。
             Button(action: { app.openHistory?() }) {
                 MiniTrend(samples: app.recentForDisplay)
             }
@@ -462,7 +464,7 @@ struct HomeView: View {
                                              || snap.primary == .switchNetwork)
                          ? "通信が数秒切れます。VPNもつなぎ直しになります"
                          : snap.primary.caption)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
@@ -516,7 +518,7 @@ struct SwitchingView: View {
                             Text(t.title)
                                 .font(.system(size: 12, weight: .medium))
                             Text(t.body)
-                                .font(.system(size: 10.5))
+                                .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -541,7 +543,7 @@ struct SwitchingView: View {
                     }
 
                     Text("一覧は直近10分間に見えたWi-Fiを合算しています。電波は常に揺れるため、切り替えても改善しないことがあります。")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -571,7 +573,7 @@ private struct SectionLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.system(size: 11, weight: .semibold))
-            Text(note).font(.system(size: 9.5)).foregroundStyle(.tertiary)
+            Text(note).font(.system(size: 9)).foregroundStyle(.tertiary)
         }
         .padding(.top, 2)
     }
@@ -586,7 +588,7 @@ private struct CandidateRow: View {
         Button(action: { if c.connectable { action() } }) {
             HStack(spacing: 9) {
                 Image(systemName: c.connectable ? "wifi" : "lock.fill")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(c.connectable ? Color.accentColor : Color.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(c.ssid)
@@ -595,7 +597,7 @@ private struct CandidateRow: View {
                     Text(c.connectable
                          ? "\(c.reason) ・ \(c.band)GHz ch\(c.channel)"
                          : "パスワードが必要（メニューバーのWi-Fiから接続）")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -603,10 +605,10 @@ private struct CandidateRow: View {
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(Phrase.signalWord(c.rssi))
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                     Text("\(c.rssi) dBm")
-                        .font(.system(size: 8.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
                 if c.connectable {
@@ -636,7 +638,7 @@ struct CapabilityChip: View {
                 .foregroundStyle(c.level.textTint)
             VStack(alignment: .leading, spacing: 0) {
                 Text(c.name)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                 Text(c.note)
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
@@ -661,7 +663,7 @@ private struct FooterLink: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 10))
+                Image(systemName: icon).font(.system(size: 11))
                 Text(title).font(.system(size: 12))
             }
         }
@@ -716,17 +718,17 @@ struct InfoRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Text(value)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(warn ? Level.fair.textTint : Color.primary)
                     .multilineTextAlignment(.trailing)
             }
             if let note {
                 Text(note)
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -756,7 +758,7 @@ struct InfoLink: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Text(title).font(.system(size: 11.5))
+                Text(title).font(.system(size: 11))
                 Spacer()
                 Image(systemName: icon).font(.system(size: 9)).foregroundStyle(.tertiary)
             }
@@ -781,7 +783,7 @@ struct DetailView: View {
                 }
 
                 InfoLink(title: app.snap.apNamed
-                         ? "この機器の呼び名を変える" : "この機器に呼び名を付ける") {
+                         ? "このWi-Fi機器の呼び名を変える" : "このWi-Fi機器に呼び名を付ける") {
                     app.reloadNamedAPs(); app.page = .naming
                 }
                 Divider().opacity(0.4)
@@ -789,7 +791,7 @@ struct DetailView: View {
                 // この回線で何ができるか
                 VStack(alignment: .leading, spacing: 6) {
                     Text("この回線でできること")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                     ForEach(app.snap.capabilities) { c in
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 7) {
@@ -801,7 +803,7 @@ struct DetailView: View {
                                     .font(.system(size: 11))
                                 Spacer()
                                 Text(c.note)
-                                    .font(.system(size: 10.5))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(c.needsSpeedTest ? .tertiary : .secondary)
                             }
                             Text(c.basis)
@@ -824,7 +826,7 @@ struct DetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     Text("情シスに相談するときは、このレポートを添えると原因が伝わります")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -846,17 +848,17 @@ struct SettingsView: View {
                 Toggle("ログイン時に自動で起動する", isOn: $app.loginOn)
                 if !app.loginStatus.isEmpty && app.loginStatus != "有効" && app.loginOn {
                     Text(app.loginStatus)
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(Level.fair.textTint)
                 }
                 Toggle("⌥⌘W で呼び出す", isOn: $app.hotKeyOn)
                 Text("入れると、他のアプリの ⌥⌘W（すべてのウインドウを閉じる）が効かなくなります")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 Toggle("メニューバーの表示を最小にする", isOn: $app.compactBar)
                 Text("メニューバーが混雑していてアイコンが隠れるときに使ってください")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -868,7 +870,7 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity)
                 }
                 Text(Build.version)
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                 Button(action: quit) {
                     Label("WiFiDoctor を終了", systemImage: "power")
@@ -893,7 +895,7 @@ struct SpeedTestView: View {
             VStack(alignment: .leading, spacing: 12) {
 
                 Text("回線を約20秒間全力で使い、実際に出る速度を測ります。常時は測りません。測定そのものが帯域を食って、かえって遅くなるためです。")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -936,12 +938,12 @@ struct SpeedTestView: View {
                 .disabled(app.busy != nil)
 
                 Text("測定中は通信が重くなります。会議中や大きな転送中は避けてください。")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let f = app.flash {
-                    Text(f).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    Text(f).font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -953,14 +955,14 @@ struct SpeedTestView: View {
                         HStack(spacing: 6) {
                             Text(DateFormatter.localizedString(from: h.at,
                                                                dateStyle: .short, timeStyle: .short))
-                                .font(.system(size: 9.5))
+                                .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                             Text(h.ssid.isEmpty ? "-" : h.ssid)
-                                .font(.system(size: 9.5))
+                                .font(.system(size: 9))
                                 .lineLimit(1)
                             Spacer(minLength: 4)
                             Text(String(format: "↓%.0f ↑%.0f Mbps", max(0, h.down), max(0, h.up)))
-                                .font(.system(size: 9.5, weight: .medium))
+                                .font(.system(size: 9, weight: .medium))
                         }
                     }
                 }
@@ -980,17 +982,17 @@ private struct SpeedCard: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.tint)
-                Text(label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+                Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
             }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(mbps.map { String(format: "%.1f", $0) } ?? "--")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(.system(size: 21, weight: .semibold, design: .rounded))
                 Text("Mbps").font(.system(size: 9)).foregroundStyle(.secondary)
             }
             Text(word ?? "-")
-                .font(.system(size: 9.5))
+                .font(.system(size: 9))
                 .foregroundStyle(.secondary)
         }
         .padding(9)
@@ -999,18 +1001,18 @@ private struct SpeedCard: View {
     }
 }
 
-/// APの呼び名を付ける画面。
+/// Wi-Fi機器（AP）に呼び名を付ける画面。
 /// `B14170` のままでは会議室と結びつかず、履歴もレポートも人間に読めない。
 struct NamingView: View {
     @ObservedObject var app: AppState
 
     var body: some View {
-        SubPage(title: "APの呼び名", back: { app.page = .home }) {
+        SubPage(title: "Wi-Fi機器の呼び名", back: { app.page = .home }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("いま接続している機器")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         if let full = app.snap.apFull {
                             HStack(spacing: 6) {
                                 TextField("例: 3F会議室A", text: $app.apNameDraft)
@@ -1037,7 +1039,7 @@ struct NamingView: View {
 
                     Text("会議室ごとに名前を付けておくと、履歴グラフのAP切替や情シスへ渡す"
                          + "レポートに場所がそのまま出ます。")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1049,7 +1051,7 @@ struct NamingView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: item.bssid == app.snap.apFull
                                       ? "wifi" : "antenna.radiowaves.left.and.right")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(item.bssid == app.snap.apFull
                                                      ? Color.accentColor : Color.secondary)
                                 VStack(alignment: .leading, spacing: 0) {
@@ -1062,7 +1064,7 @@ struct NamingView: View {
                                 }
                                 Spacer(minLength: 4)
                                 Button(action: { app.removeAPName(item.bssid) }) {
-                                    Image(systemName: "trash").font(.system(size: 10))
+                                    Image(systemName: "trash").font(.system(size: 11))
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.secondary)
@@ -1131,7 +1133,7 @@ struct MacView: View {
                         ForEach(Array(tips.enumerated()), id: \.offset) { _, t in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: "arrow.right.circle.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(.tint)
                                     .padding(.top, 1)
                                 Text(t)
