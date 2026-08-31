@@ -126,10 +126,13 @@ final class MenuController: NSObject, NSPopoverDelegate {
         // メニューバーが混むと溢れて消えるので、既定でも幅は数値2桁ぶんに抑える
         let compact = Settings.store.bool(forKey: "compactBar")
         b.attributedTitle = NSAttributedString(
-            string: compact ? "" : (monitor.link.associated ? " \(monitor.score)" : " --"),
+            // 測定中はパネル側が「--」を出している。ここだけ数字を出すと、
+            // 同じ瞬間に「91」と「--」が並ぶ。まだ分からないものは断定しない。
+            string: compact ? ""
+                : (monitor.link.associated && !app.snap.measuring ? " \(monitor.score)" : " --"),
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                          .foregroundColor: color])
-        b.toolTip = "\(app.snap.headline)\n⌥⌘W で今すぐ調べる"
+        b.toolTip = app.hotKeyOn ? "\(app.snap.headline)\n⌥⌘W で今すぐ調べる" : app.snap.headline
     }
 
     // MARK: - 操作

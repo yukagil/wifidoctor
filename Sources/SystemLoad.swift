@@ -97,7 +97,8 @@ struct SystemLoad {
     // 同時に読み書きされる。ARCを伴わない値なので落ちはしないが、差分が壊れて
     // CPU使用率が実態とかけ離れ、「Macの負荷が高い」が誤って出る。
     private static let lock = NSLock()
-    private static var prevCPU: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
+    private static var prevCPU: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32,
+                                 at: Date)?
     private static var prevSwap: (inC: UInt64, outC: UInt64, at: Date)?
 
     /// - Parameter includeProcesses: アプリ一覧まで取るか。
@@ -125,14 +126,21 @@ struct SystemLoad {
         }
         if cpuOK == KERN_SUCCESS {
             let cur = (user: cpuInfo.cpu_ticks.0, system: cpuInfo.cpu_ticks.1,
-                       idle: cpuInfo.cpu_ticks.2, nice: cpuInfo.cpu_ticks.3)
+                       idle: cpuInfo.cpu_ticks.2, nice: cpuInfo.cpu_ticks.3, at: Date())
             if let p = prevCPU {
+                // 間隔が短すぎると、わずかな tick の差がそのまま使用率になって荒れる。
+                // 「Macの負荷が高い」が出たり出なかったりするのはこれが原因。
+                let dt = cur.at.timeIntervalSince(p.at)
                 let du = Double(cur.user &- p.user), ds = Double(cur.system &- p.system)
                 let di = Double(cur.idle &- p.idle), dn = Double(cur.nice &- p.nice)
                 let total = du + ds + di + dn
-                if total > 0 { s.cpuPercent = (du + ds + dn) / total * 100 }
+                if dt > 0.5, total > 0 {
+                    s.cpuPercent = (du + ds + dn) / total * 100
+                    prevCPU = cur
+                }
+            } else {
+                prevCPU = cur
             }
-            prevCPU = cur
         }
 
         if let level = sysctlInt("kern.memorystatus_vm_pressure_level") { s.memoryPressureLevel = level }

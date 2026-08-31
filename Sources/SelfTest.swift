@@ -46,8 +46,11 @@ enum SelfTest {
         testDownsample()
         testRetention()
         testLogRobustness()
+        testTailReading()
+        testRoamRecovery()
         testDateFormatIndependence()
 
+        Settings.cleanUpTemporaryStores()
         print("チェック \(checks) 件")
         if failures.isEmpty {
             print("すべて合格")
@@ -701,6 +704,72 @@ enum SelfTest {
         eq(log.load(date: day).count, 0, "無い日でも落ちない")
     }
 
+    /// 追記の途中で読んだときに、書きかけの行を二重に読まないこと。
+    private static func testTailReading() {
+        guard SampleLog.isTemporary else {
+            expect(false, "本物の記録フォルダに対して差分読みのテストを走らせようとした")
+            return
+        }
+        let log = SampleLog()
+        let day = Date(timeIntervalSince1970: 1_600_100_000)
+        let url = SampleLog.fileURL(for: day)
+        try? FileManager.default.removeItem(at: url)
+
+        func line(_ i: Int) -> Data {
+            var s = sample(i * 5, score: 80 + i)
+            s.at = day.addingTimeInterval(Double(i) * 5)
+            var d = try! JSONEncoder.iso8601.encode(s)
+            d.append(0x0A)
+            return d
+        }
+        var content = Data()
+        for i in 0..<3 { content.append(line(i)) }
+        try? content.write(to: url)
+
+        var offset: UInt64 = 0
+        eq(log.loadTail(date: day, from: &offset).count, 3, "最初は全件読む")
+        eq(log.loadTail(date: day, from: &offset).count, 0, "続きが無ければ0件")
+
+        // 書きかけの行がある状態で読む
+        var partial = content
+        partial.append(line(3).prefix(15))
+        try? partial.write(to: url)
+        eq(log.loadTail(date: day, from: &offset).count, 0, "書きかけの行はまだ読まない")
+
+        // 書き終わったら、その行だけを読む（同じ行を二度読まない）
+        var complete = content
+        complete.append(line(3))
+        complete.append(line(4))
+        try? complete.write(to: url)
+        eq(log.loadTail(date: day, from: &offset).count, 2, "続きだけを読む")
+        eq(log.loadTail(date: day, from: &offset).count, 0, "読み終えたら0件")
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// つなぎ直しの途中で落ちたときに、Wi-Fi を戻せること。
+    private static func testRoamRecovery() {
+        guard SampleLog.isTemporary else {
+            expect(false, "本物の記録フォルダに対して復旧のテストを走らせようとした")
+            return
+        }
+        let marker = SampleLog.dir.appendingPathComponent("roaming.marker")
+        Roamer.clearPowerOffMark()
+        expect(!FileManager.default.fileExists(atPath: marker.path), "初期状態に目印は無い")
+
+        Roamer.markPowerOff("en0")
+        expect(FileManager.default.fileExists(atPath: marker.path), "切る前に目印を置く")
+        eq(try? String(contentsOf: marker, encoding: .utf8), "en0", "どのインターフェースか残す")
+
+        Roamer.clearPowerOffMark()
+        expect(!FileManager.default.fileExists(atPath: marker.path), "終わったら消す")
+
+        // 目印は記録ではないので、保持期間の掃除で巻き込まない
+        Roamer.markPowerOff("en0")
+        SampleLog().pruneOldLogs()
+        expect(FileManager.default.fileExists(atPath: marker.path), "掃除で目印を消さない")
+        Roamer.clearPowerOffMark()
+    }
+
     /// 日付の読み書きが、利用者の暦法設定に引きずられないこと。
     /// 和暦や仏暦だとファイル名が変わり、暦を切り替えた瞬間に
     /// 保持期間の削除が全部消す／一件も消さない のどちらかに振れていた。
@@ -737,6 +806,20 @@ enum SelfTest {
     // MARK: - 通知の抑制
 
     private static func testNotifier() {
+        // 通知の文言そのものを確かめる。本文を捨てていたせいで、
+        // 「Wi-Fiが混み合っていますは解消しました。」のような破綻を見逃していた。
+        for v in Verdict.allCases where v.isProblem {
+            let body = Phrase.notice(v)
+            expect(!body.isEmpty, "通知の本文がある: \(v.rawValue)")
+            expect(!body.contains("dBm") && !body.contains("ch"),
+                   "通知の本文に専門語を出さない: \(v.rawValue) → \(body)")
+            expect(!Phrase.headline(v).contains("点"), "通知の題に点数を入れない: \(v.rawValue)")
+            // 「〜は解消しました」に繋いで壊れない形か
+            let recovered = "\(v.plainCause)状態は解消しました。"
+            expect(!recovered.contains("ですは") && !recovered.contains("ますは"),
+                   "回復の文が日本語として通る: \(recovered)")
+        }
+
         // 実時間を待たずに検証するため、時計を差し替える
         var clock = Date(timeIntervalSince1970: 1_000_000)
         func advance(_ sec: TimeInterval) { clock = clock.addingTimeInterval(sec) }
@@ -752,7 +835,7 @@ enum SelfTest {
         // 対処できない状態は何度続いても通知しない
         let (n1, sent1) = make()
         for _ in 0..<20 {
-            n1.observe(verdict: .isp, score: 40, actionable: false, detail: "x")
+            n1.observe(verdict: .isp, score: 40, actionable: false)
             advance(10)
         }
         eq(sent1().count, 0, "自分で直せない状態は通知しない")
@@ -760,48 +843,48 @@ enum SelfTest {
         // 30秒続くまで通知しない
         clock = Date(timeIntervalSince1970: 1_000_000)
         let (n2, sent2) = make()
-        n2.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+        n2.observe(verdict: .sticky, score: 40, actionable: true)
         advance(20)
-        n2.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+        n2.observe(verdict: .sticky, score: 40, actionable: true)
         eq(sent2().count, 0, "20秒では通知しない")
         advance(15)
-        n2.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+        n2.observe(verdict: .sticky, score: 40, actionable: true)
         eq(sent2().count, 1, "30秒続いたら通知する")
 
         // クールダウン中は再通知しない
         for _ in 0..<10 {
             advance(60)
-            n2.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+            n2.observe(verdict: .sticky, score: 40, actionable: true)
         }
         eq(sent2().count, 1, "15分以内は同じ原因を再通知しない")
         advance(1000)
-        n2.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+        n2.observe(verdict: .sticky, score: 40, actionable: true)
         eq(sent2().count, 2, "クールダウンを過ぎたら再通知する")
 
         // 回復は1回だけ
-        n2.observe(verdict: .ok, score: 95, actionable: false, detail: "x")
+        n2.observe(verdict: .ok, score: 95, actionable: false)
         advance(40)
-        n2.observe(verdict: .ok, score: 95, actionable: false, detail: "x")
+        n2.observe(verdict: .ok, score: 95, actionable: false)
         eq(sent2().count, 3, "回復を通知する")
         advance(100)
-        n2.observe(verdict: .ok, score: 95, actionable: false, detail: "x")
+        n2.observe(verdict: .ok, score: 95, actionable: false)
         eq(sent2().count, 3, "回復通知は繰り返さない")
 
         // 状態が入れ替わったら継続時間をやり直す
         clock = Date(timeIntervalSince1970: 2_000_000)
         let (n4, sent4) = make()
-        n4.observe(verdict: .sticky, score: 40, actionable: true, detail: "x")
+        n4.observe(verdict: .sticky, score: 40, actionable: true)
         advance(25)
-        n4.observe(verdict: .weak, score: 40, actionable: true, detail: "x")   // 別の原因に変化
+        n4.observe(verdict: .weak, score: 40, actionable: true)   // 別の原因に変化
         advance(10)
-        n4.observe(verdict: .weak, score: 40, actionable: true, detail: "x")
+        n4.observe(verdict: .weak, score: 40, actionable: true)
         eq(sent4().count, 0, "原因が変わったら継続時間を数え直す")
 
         // 無効化したら何も出さない
         let (n3, sent3) = make()
         n3.enabled = false
         for _ in 0..<20 {
-            n3.observe(verdict: .weak, score: 20, actionable: true, detail: "x")
+            n3.observe(verdict: .weak, score: 20, actionable: true)
             advance(60)
         }
         eq(sent3().count, 0, "通知を切ってあれば出さない")
@@ -1197,6 +1280,14 @@ enum SelfTest {
                        "案内しているボタンが実在する: \(v.rawValue) → \(label)")
             }
         }
+
+        // 一時的な設定の置き場所を残さないこと。
+        // 残すと ~/Library/Preferences に溜まり続け、README の消し方では消えない。
+        let prefs = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences")
+        let junk = (try? FileManager.default.contentsOfDirectory(atPath: prefs.path))?
+            .filter { $0.hasPrefix("WiFiDoctorTest-") } ?? []
+        expect(junk.count <= 1, "テスト用の設定ファイルが溜まっていない: \(junk.count)個")
 
         // 通知は画面と同じ平易な言葉で出すこと
         for v in Verdict.allCases where v.isProblem {

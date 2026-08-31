@@ -37,7 +37,9 @@ final class Notifier {
     /// - Parameter actionable: 利用者が自分で改善できる状態かどうか。
     ///   回線側の問題など「知らせても打つ手がない」ものは通知しない。
     ///   通知は行動を促すためのものなので、行動できないなら出す意味がない。
-    func observe(verdict: Verdict, score: Int, actionable: Bool, detail: String) {
+    /// 通知に出すのは画面と同じ言い回しだけ。点数や dBm は前面に出さない。
+    func observe(verdict: Verdict, score: Int, actionable: Bool) {
+        _ = score
         guard enabled else { return }
         let t = now()
         if verdict != runVerdict { runVerdict = verdict; runStartedAt = t }
@@ -51,12 +53,15 @@ final class Notifier {
             notifiedProblem = verdict
             // 通知はアプリを開かなくても届く唯一の画面。ここだけ専門語のままだと、
             // 画面用に用意した平易な言い回しが全部無駄になる。
-            send(title: "\(Phrase.headline(verdict))（\(score)点）",
-                 body: Phrase.hint(verdict) ?? detail)
+            // 点数は前面に出さない方針（画面では段階だけを見せている）。
+            // 通知は最も前面なので、ここだけ生の数値を出すのは筋が通らない。
+            send(title: Phrase.headline(verdict), body: Phrase.notice(verdict))
         } else if verdict == .ok, let was = notifiedProblem, sustained >= requiredDuration {
             notifiedProblem = nil
-            send(title: "Wi-Fiが元に戻りました（\(score)点）",
-                 body: "\(Phrase.headline(was))は解消しました。")
+            // 見出しは「Wi-Fiが混み合っています」のような文なので、
+            // そのまま「〜は解消しました」に繋ぐと日本語が壊れる。
+            send(title: "Wi-Fiが元に戻りました",
+                 body: "\(was.plainCause)状態は解消しました。")
         }
     }
 

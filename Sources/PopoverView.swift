@@ -247,6 +247,30 @@ struct BigButtonStyle: ButtonStyle {
 
 // MARK: - ホーム
 
+/// 位置情報が無いことを伝える1行。押すと設定まで飛ぶ。
+/// 説明だけ置くと、読んだ人が自分でパスを辿ることになる（そして辿れない）。
+struct LocationNotice: View {
+    @ObservedObject var app: AppState
+    var text: String
+
+    var body: some View {
+        Button(action: { app.openLocationSettings() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "location.slash").font(.system(size: 11))
+                Text(text).font(.system(size: 11))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 9))
+            }
+            .foregroundStyle(Level.fair.textTint)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Level.fair.tint.opacity(0.12))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct HomeView: View {
     @ObservedObject var app: AppState
 
@@ -259,23 +283,7 @@ struct HomeView: View {
             // macOSは許可の確認を一度しか出さないので、断った人は自力で戻れない。
             // 色や絵では伝えられないので、ここだけは文と導線を置く。
             if snap.locationDenied {
-                Button(action: { app.openLocationSettings() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "location.slash")
-                            .font(.system(size: 11))
-                        Text("位置情報の許可が無いため、接続先を識別できません")
-                            .font(.system(size: 11))
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9))
-                    }
-                    .foregroundStyle(Level.fair.textTint)
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Level.fair.tint.opacity(0.12))
-                }
-                .buttonStyle(.plain)
+                LocationNotice(app: app, text: "位置情報の許可が無いため、接続先を識別できません")
             }
 
             // 状態の一言 + スコア
@@ -448,8 +456,11 @@ struct HomeView: View {
 
                     // VPN中につなぎ直すと、Wi-Fiだけでなく VPN のセッションも切れる。
                     // 押す前に知らせないと、会議や作業の途中で落ちる。
-                    Text(snap.primary == .reconnect && snap.vpn != nil
-                         ? "数秒だけ通信が切れます。VPNもつなぎ直しになります"
+                    // つなぎ直しも切り替えも、VPN のセッションを落とす。
+                    // 押す前に知らせないと、会議や作業の途中で落ちる。
+                    Text(snap.vpn != nil && (snap.primary == .reconnect
+                                             || snap.primary == .switchNetwork)
+                         ? "通信が数秒切れます。VPNもつなぎ直しになります"
                          : snap.primary.caption)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -493,15 +504,15 @@ struct SwitchingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
 
-                    if app.snap.candidates.isEmpty {
+                    if app.snap.locationDenied {
+                        // 説明だけ置いて袋小路にしない。押せば設定まで飛ぶ。
+                        LocationNotice(app: app,
+                                       text: "位置情報の許可が無いため、近くのWi-Fiを調べられません")
+                    } else if app.snap.candidates.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(app.snap.locationDenied
-                                 ? "位置情報の許可が無いため、近くのWi-Fiを調べられません"
-                                 : "切り替えられる回線が見つかりません")
+                            Text("切り替えられる回線が見つかりません")
                                 .font(.system(size: 12, weight: .medium))
-                            Text(app.snap.locationDenied
-                                 ? "システム設定 > プライバシーとセキュリティ > 位置情報サービス で許可してください。"
-                                 : "iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
+                            Text("iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1007,11 +1018,14 @@ struct NamingView: View {
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(app.snap.locationDenied
-                                 ? "位置情報の許可が無いため、どのAPかを識別できません"
-                                 : "接続していないため名前を付けられません")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                            if app.snap.locationDenied {
+                                LocationNotice(app: app,
+                                               text: "位置情報の許可が無いため、どのAPかを識別できません")
+                            } else {
+                                Text("接続していないため名前を付けられません")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
 

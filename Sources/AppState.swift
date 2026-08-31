@@ -573,9 +573,11 @@ final class AppState: ObservableObject {
 
     /// 位置情報の設定を開く。許可はアプリ側からは戻せないので、場所まで案内する。
     func openLocationSettings() {
-        let url = URL(string:
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")
-        if let url { NSWorkspace.shared.open(url) }
+        // 「システム設定」以降は識別子が変わっている。新しい方から順に試す。
+        for s in ["x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_LocationServices",
+                  "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices"] {
+            if let url = URL(string: s), NSWorkspace.shared.open(url) { return }
+        }
     }
 
     /// 別のWi-Fiへ切り替える。混雑から逃げるための主操作。

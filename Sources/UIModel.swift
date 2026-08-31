@@ -203,6 +203,21 @@ enum Phrase {
         return score >= 60 ? .fair : .bad
     }
 
+    /// 通知の本文。
+    ///
+    /// 通知は「自分で直せる状態」のときだけ出る。画面用の `hint` は
+    /// ポップオーバーのボタンが見えている前提の文なので、単独で届くと噛み合わない
+    /// （空いている回線がある時にだけ届く通知が「無ければ席を移せ」と言う）。
+    static func notice(_ v: Verdict) -> String {
+        switch v {
+        case .sticky:      return "近くに強いWi-Fiがあります。［つなぎ直す］で切り替わります"
+        case .congested:   return "空いている別のWi-Fiがあります。［別のWi-Fiに切り替える］で移れます"
+        case .weak:        return "Wi-Fi機器から遠すぎます。近づくのがいちばん効きます"
+        case .selfTraffic: return "このMac自身の通信で埋まっています。転送を止めると戻ります"
+        default:           return hint(v) ?? ""
+        }
+    }
+
     /// 「何が起きているか」を専門用語なしで言い切る。
     static func headline(_ v: Verdict) -> String {
         switch v {
@@ -259,7 +274,9 @@ enum Phrase {
     /// 別枠のヒントを出すと画面が重くなるので、説明はリード文1か所に集約する。
     static func sublineForPlace(_ v: Verdict, usableAPs: Int, vpn: String?,
                                 caps: [Capability]) -> String {
-        if v == .congested, usableAPs <= 1 {
+        // 0台は「1台しかない」ではなく「まだ数えていない」。
+        // スキャン前に構造的な混雑だと言い切ると、後で覆る。
+        if v == .congested, usableAPs == 1 {
             return "この場所はWi-Fi機器1台のみ。混雑は構造的で、つなぎ直しでは解消しません"
         }
         if (v == .isp || v == .dns), vpn != nil {
@@ -272,7 +289,7 @@ enum Phrase {
         switch v {
         case .ok:        return nil
         case .congested: return "空いている回線がなければ、席を移すか有線・テザリングが確実です"
-        case .sticky:    return "「つなぎ直す」で近くの強いWi-Fiに切り替わります"
+        case .sticky:    return "［つなぎ直す］で近くの強いWi-Fiに切り替わります"
         case .weak:      return "Wi-Fi機器に近い席へ移動してみてください"
         case .isp:       return "パソコン側でできることはありません。続くようなら［詳細］からレポートを書き出して情シスへ渡してください"
         case .dns:       return "続くようなら情シスに相談してください"

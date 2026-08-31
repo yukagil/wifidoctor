@@ -21,6 +21,7 @@ FRAMEWORKS="-framework AppKit -framework SwiftUI -framework CoreWLAN -framework 
             -framework UserNotifications -framework ServiceManagement"
 
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# ここから先で失敗した場合、build/ は中途半端に残るが、設置済みのアプリは触らない
 
 # Intel と Apple Silicon の両方で動くようにする。
 # 片方だけだと、もう片方の機械では起動すらできない。
@@ -36,11 +37,14 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/WiFiDoctor.icns ] && cp Resources/WiFiDoctor.icns "$APP/Contents/Resources/"
 
 # 宣言どおりの最低OSでビルドされたかを、バイナリ側から確かめる。
-BUILT_MIN=$(otool -l "$APP/Contents/MacOS/WiFiDoctor" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
-if [ "$BUILT_MIN" != "$MIN_MACOS" ]; then
-  echo "!! バイナリの最低OS($BUILT_MIN) が宣言($MIN_MACOS)と違う" >&2
-  exit 1
-fi
+# fat binary は先頭のスライスだけ見ても足りない。全部を確かめる。
+for M in $(otool -l "$APP/Contents/MacOS/WiFiDoctor" | awk '/minos/{print $2}'); do
+  if [ "$M" != "$MIN_MACOS" ]; then
+    echo "!! バイナリの最低OS($M) が宣言($MIN_MACOS)と違う" >&2
+    exit 1
+  fi
+done
+BUILT_MIN="$MIN_MACOS"
 ARCHS=$(lipo -archs "$APP/Contents/MacOS/WiFiDoctor")
 echo "==> arch: $ARCHS / minos: $BUILT_MIN"
 
@@ -59,14 +63,19 @@ fi
 # フォルダを動かした瞬間に壊れる。安定した ~/Applications へ設置する。
 DEST="$HOME/Applications/WiFiDoctor.app"
 mkdir -p "$HOME/Applications"
-rm -rf "$DEST"
-cp -R "$APP" "$DEST"
+# 先に消すと、この後で失敗したときに動いていたアプリまで無くなる。
+# 隣に置いてから入れ替える。
+STAGE="$HOME/Applications/.WiFiDoctor.new"
+rm -rf "$STAGE"
+cp -R "$APP" "$STAGE"
 if [ -n "${DEVELOPER_ID:-}" ]; then
   codesign --force --options runtime --timestamp \
-    --sign "$DEVELOPER_ID" --identifier dev.yukagil.wifidoctor "$DEST"
+    --sign "$DEVELOPER_ID" --identifier dev.yukagil.wifidoctor "$STAGE"
 else
-  codesign --force --sign - --identifier dev.yukagil.wifidoctor "$DEST"
+  codesign --force --sign - --identifier dev.yukagil.wifidoctor "$STAGE"
 fi
+rm -rf "$DEST"
+mv "$STAGE" "$DEST"
 
 echo "==> built:     $(pwd)/$APP"
 echo "==> installed: $DEST"

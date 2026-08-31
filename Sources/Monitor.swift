@@ -151,11 +151,19 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// 断られたことが確定しているか。まだ聞いていない状態と区別する。
+    /// 位置情報が無くて接続先を識別できていないか。
+    ///
+    /// 状態だけで判定すると取りこぼす。管理された Mac では位置情報サービス自体が
+    /// 切られていて、許可の状態は `.notDetermined` のまま SSID だけ読めない。
+    /// 「つながっているのに接続先が読めない」という症状で見る。
     var locationDenied: Bool {
-        let s = loc.authorizationStatus
-        return s == .denied || s == .restricted
+        if locationAuthorized { return false }
+        // 起動直後は確認ダイアログの返事待ちなので、まだ何も言わない
+        if Date().timeIntervalSince(startedAt) < 10 { return false }
+        return link.associated && link.ssid == nil
     }
+
+    private let startedAt = Date()
 
     func start() {
         // 前回、つなぎ直しの途中で落ちていたら Wi-Fi が切れたまま残っている
@@ -343,8 +351,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 self.record()
                 self.refreshTalkersIfNeeded()
                 self.notifier.observe(verdict: self.verdict, score: self.score,
-                                      actionable: self.actionableCheck?(self.verdict) ?? false,
-                                      detail: self.detailLine())
+                                      actionable: self.actionableCheck?(self.verdict) ?? false)
                 self.onUpdate?()
             }
         }
@@ -520,14 +527,4 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         log.append(s)
     }
 
-    func detailLine() -> String {
-        var parts: [String] = []
-        if link.associated {
-            parts.append("\(link.rssi)dBm / ch\(link.channel) / \(Int(smoothedTx))Mbps")
-        }
-        if let g = gw, let a = g.avg {
-            parts.append(String(format: "AP まで %.1fms±%.1f", a, g.stddev ?? 0))
-        }
-        return parts.joined(separator: " · ") + "\n" + verdict.advice
-    }
 }

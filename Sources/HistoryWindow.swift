@@ -426,8 +426,16 @@ enum Palette {
         case .offline: return .systemGray
         }
     }
-    static func level(score: Int, badRatio: Double = 0) -> Level {
+    /// 既定値を置かない。省略できるようにすると、崩れた割合を渡し忘れた場所だけ
+    /// 昔の「点数だけ」の基準が生き残る。
+    static func level(score: Int, badRatio: Double) -> Level {
         Phrase.level(score: score, badRatio: badRatio)
+    }
+
+    /// 点数そのものに色を付ける。良し悪しの判定ではなく、数値の見た目のため。
+    /// 「悪いとき 48点」のような、分布の裾を出すときに使う。
+    static func scoreColor(_ score: Int) -> NSColor {
+        level(score >= 80 ? .good : (score >= 60 ? .fair : .bad))
     }
     static func word(_ l: Level) -> String {
         switch l {
@@ -537,7 +545,7 @@ final class VerdictCard: NSView {
             let tw = NSAttributedString(string: t, attributes: [
                 .font: NSFont.systemFont(ofSize: 10)]).size().width
             put(t, x: box.midX - tw / 2, y: box.minY + 64, size: 10,
-                color: Palette.level(Palette.level(score: bad)))
+                color: Palette.scoreColor(bad))
         }
 
         var y: CGFloat = 14
@@ -847,7 +855,7 @@ final class CompareRow: NSView {
         var right = rightEdge
         if let bad = place.score.bad, bad < mid - 2 {
             right -= putRight(" / \(Int(bad))", rightEdge: rightEdge, y: 16, size: 15,
-                              color: Palette.level(Palette.level(score: Int(bad))))
+                              color: Palette.scoreColor(Int(bad)))
         }
         putRight("\(Int(mid))", rightEdge: right, y: 8, size: 27, weight: .semibold, color: c)
         putRight(Palette.word(place.level), rightEdge: rightEdge, y: 44, size: 10.5,
