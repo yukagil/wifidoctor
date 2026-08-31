@@ -27,6 +27,10 @@ enum LinkSampler {
 
     /// CoreWLAN が 0 を返したときのフォールバック値。system_profiler から拾う。
     /// ノイズフロアは秒単位では変化しないので、数十秒古い値でも判定には十分。
+    ///
+    /// 取得は背景（`tickWAN` と `deepCheck`）から、読みは main から行われる。
+    /// `Date?` は参照を伴うので、無防備に共有すると解放が競合する。錠で囲う。
+    private static let lock = NSLock()
     private static var fallbackNoise: Int = 0
     private static var fallbackAt: Date?
 
@@ -36,9 +40,15 @@ enum LinkSampler {
     /// （macOS 26 では OS 自体が noise を返さない場面が多く、その場合は取得を諦めて
     ///   RSSI・リンクレート・第一ホップ遅延で判定する）
     static func refreshNoiseFallback() {
-        if let at = fallbackAt, Date().timeIntervalSince(at) < 300 { return }   // まだ有効な値がある
-        if let at = lastAttempt, Date().timeIntervalSince(at) < 120 { return }  // 直近に試して失敗した
+        lock.lock()
+        if let at = fallbackAt, Date().timeIntervalSince(at) < 300 {
+            lock.unlock(); return                                   // まだ有効な値がある
+        }
+        if let at = lastAttempt, Date().timeIntervalSince(at) < 120 {
+            lock.unlock(); return                                   // 直近に試して失敗した
+        }
         lastAttempt = Date()
+        lock.unlock()   // system_profiler は数秒かかる。錠を持ったまま待たない。
         let out = NetProbe.run("/usr/sbin/system_profiler", ["SPAirPortDataType"], timeout: 10)
         for line in out.split(separator: "\n") where line.contains("Signal / Noise:") {
             // 例: "Signal / Noise: -71 dBm / -96 dBm"
@@ -47,8 +57,10 @@ enum LinkSampler {
                 return Int(t)
             }
             if let n = nums.last, n < 0 {
+                lock.lock()
                 fallbackNoise = n
                 fallbackAt = Date()
+                lock.unlock()
             }
             break
         }
@@ -59,8 +71,11 @@ enum LinkSampler {
         guard let i = CWWiFiClient.shared().interface(), i.powerOn() else { return l }
         l.rssi   = i.rssiValue()
         l.noise  = i.noiseMeasurement()
-        if l.noise >= 0, let at = fallbackAt, Date().timeIntervalSince(at) < 300 {
-            l.noise = fallbackNoise
+        lock.lock()
+        let cached = (value: fallbackNoise, at: fallbackAt)
+        lock.unlock()
+        if l.noise >= 0, let at = cached.at, Date().timeIntervalSince(at) < 300 {
+            l.noise = cached.value
         }
         l.txRate = i.transmitRate()
         l.ssid   = i.ssid()

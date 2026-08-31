@@ -63,7 +63,7 @@ final class ChartView: NSView {
         let ms: (Double) -> String = { String(format: "%.0f", $0) }
 
         return [
-            Series(title: "応答の速さ (ms)",
+            Series(title: "応答の速さ（ms）",
                    note: "低いほど良い",
                    lo: 0, hi: rttHi,
                    lines: [
@@ -71,13 +71,13 @@ final class ChartView: NSView {
                     Line(title: "インターネット", color: .systemPurple, value: { $0.netRTT }),
                    ], fmt: ms),
 
-            Series(title: "ゆらぎ (ms)",
+            Series(title: "ゆらぎ（ms）",
                    note: "会議の音声が途切れる主因",
                    lo: 0, hi: jitHi,
                    lines: [Line(title: "ゆらぎ", color: .systemOrange, value: { $0.gwJitter })],
                    fmt: ms),
 
-            Series(title: "パケット損失 (%)",
+            Series(title: "とりこぼし（%）",
                    note: "0%が正常",
                    lo: 0, hi: lossHi,
                    lines: [
@@ -85,13 +85,13 @@ final class ChartView: NSView {
                     Line(title: "インターネット", color: .systemPurple, value: { $0.netLoss }),
                    ], fmt: ms),
 
-            Series(title: "電波の強さ (dBm)",
+            Series(title: "電波の強さ（dBm）",
                    note: "遅さの原因側の指標",
                    lo: -90, hi: -30,
                    lines: [Line(title: "RSSI", color: .systemBlue, value: { Double($0.rssi) })],
                    fmt: ms),
 
-            Series(title: "リンク速度 (Mbps)",
+            Series(title: "リンク速度（Mbps）",
                    note: "規格上の接続速度。実効スループットではない",
                    lo: 0, hi: mbpsHi,
                    lines: [Line(title: "リンク", color: .systemGreen, value: { $0.txRate })],

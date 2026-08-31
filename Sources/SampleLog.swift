@@ -135,8 +135,6 @@ final class SampleLog {
         trimSpeedTests()
     }
 
-    static let speedLogURL: URL = dir.appendingPathComponent("speedtests.jsonl")
-
     /// 速度テスト履歴の追記。切り詰めと同じキューで行う。
     /// 別々に触ると、切り詰めがファイルを差し替えた隙に書いた1件が消える。
     func appendSpeedTest(_ line: String) {
@@ -213,11 +211,12 @@ final class SampleLog {
         let dropped = rawSamples.count - samples.count
         guard !samples.isEmpty else { return "\(title) の記録はありません。" }
 
-        var out = "Wi-Fi 診断レポート  \(title)\n"
+        var out = "Wi-Fi 診断レポート  \(title)  [\(Build.version)]\n"
         out += "観測 \(samples.count) 件\n"
         // 渡す本人が判断できるように、何が入っているかを先に書く。
         // 知らずに提出させるのが一番まずい。
-        out += "※ このレポートには、接続していたAP（BSSIDと呼び名）と時間帯が含まれます。\n\n"
+        out += "※ このレポートには、接続していたWi-Fi名とAP（BSSID・呼び名）、"
+        out += "および分単位の時刻が含まれます。\n\n"
         if dropped > 0 {
             out += "（スリープ中に飛び飛びで残った \(dropped) 件は集計から除外しています）\n"
         }

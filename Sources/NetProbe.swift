@@ -44,10 +44,16 @@ enum NetProbe {
 
     /// route の呼び出しを差し替えられる形。優先順そのものを検証できるようにしてある。
     /// インターフェース指定を先に試し、取れなければ全域の経路へ退避する。
+    /// インターフェース指定が使えたか。使えないと VPN 配下で
+    /// トンネルの対向を「Wi-Fi機器」として測ってしまう（＝誤診断へ戻る）。
+    /// 黙って戻ると誰も気づけないので、状態として残す。
+    private(set) static var gatewayScoped = true
+
     static func gateway(interface: String?, run: ([String]) -> String) -> String? {
         if let interface, !interface.isEmpty {
             let scoped = run(["-n", "get", "-ifscope", interface, "default"])
-            if let ip = parseGateway(scoped) { return ip }
+            if let ip = parseGateway(scoped) { gatewayScoped = true; return ip }
+            gatewayScoped = false
         }
         return parseGateway(run(["-n", "get", "default"]))
     }

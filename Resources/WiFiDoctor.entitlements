@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- スキャン結果の SSID/BSSID を読むために要る。
+         これが無いと「別のWi-Fiに切り替える」の候補が構造的に空になる。
+         Developer ID で署名するときだけ付けられる（ad-hoc では無効）。 -->
+    <key>com.apple.developer.networking.wifi-info</key>
+    <true/>
+</dict>
+</plist>

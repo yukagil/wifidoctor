@@ -639,7 +639,25 @@ enum UITest {
                    "位置情報を断られた状態でも描画できる: \(page)")
         }
         app.page = .home
+
+        // 描けるだけでは足りない。どの状態で何と言うかを検査する。
+        // 「接続していないため」を接続中に出したら事実と違う。
+        expect(Phrase.cannotName(locationDenied: true).contains("位置情報"),
+               "断られていれば理由を言う")
+        expect(Phrase.cannotName(locationDenied: false).contains("接続していない"),
+               "断られていなければ従来どおり")
+
+        let denied = Phrase.noCandidates(locationDenied: true, namesUnavailable: false)
+        expect(denied.title.contains("位置情報"), "許可が無いことを先に言う")
+        let blind = Phrase.noCandidates(locationDenied: false, namesUnavailable: true)
+        expect(blind.title.contains("名前が読めません"),
+               "見えているのに名前が無い状態を「見つからない」と言わない")
+        let none = Phrase.noCandidates(locationDenied: false, namesUnavailable: false)
+        expect(none.title.contains("見つかりません"), "本当に無いときだけ「見つかりません」")
+        expect(Set([denied.title, blind.title, none.title]).count == 3,
+               "3つの状態を別の言葉で言い分ける")
     }
+
 
     // MARK: - 負荷時の分析
 
@@ -696,24 +714,34 @@ enum UITest {
 
         expect(sm.betterAP(than: l) == nil, "スキャン前は乗り換え候補を出さない")
         expect(sm.coChannelCount(l) == 0, "スキャン前の同チャンネル数は0")
+        expect(!sm.namesUnavailable, "スキャン前は「名前が読めない」とも言わない")
 
-        let sem = DispatchSemaphore(value: 0)
-        sm.scan(current: l) { _ in sem.signal() }
-        while sem.wait(timeout: .now() + 0.05) == .timedOut {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        func ap(_ ssid: String?, _ bssid: String?, _ rssi: Int, ch: Int = 44) -> SeenAP {
+            SeenAP(ssid: ssid, bssid: bssid, rssi: rssi, channel: ch, band: 5,
+                   isCurrent: false, secure: true)
         }
-        let first = sm.lastScan.count
+
+        // 1回目
+        sm.merge([ap("net", "aa:00", -70), ap("other", "bb:01", -55)])
+        expect(sm.lastScan.count == 2, "取り込んだ数" + ": \(sm.lastScan.count)")
         expect(sm.lastScanAt != nil, "スキャン時刻が記録される")
+        expect(sm.coChannelCount(l) == 2, "同じチャンネルの台数を数える" + ": \(sm.coChannelCount(l))")
 
-        // 2回目でも件数が減らないこと（蓄積しているので取りこぼしが埋まる）
-        let sem2 = DispatchSemaphore(value: 0)
-        sm.scan(current: l) { _ in sem2.signal() }
-        while sem2.wait(timeout: .now() + 0.05) == .timedOut {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        }
-        expect(sm.lastScan.count >= first,
-               "スキャンを重ねても件数が減らない (\(first) → \(sm.lastScan.count))")
-        print("  スキャン蓄積: 1回目 \(first)台 → 2回目 \(sm.lastScan.count)台")
+        // 2回目で別のAPが見えても、前回のぶんは残る（取りこぼしを埋める）
+        sm.merge([ap("third", "cc:02", -60)])
+        expect(sm.lastScan.count == 3, "重ねても件数が減らない" + ": \(sm.lastScan.count)")
+
+        // 期限を過ぎたものは落ちる
+        sm.merge([ap("fresh", "dd:03", -50)], at: Date().addingTimeInterval(600))
+        expect(sm.lastScan.count == 1, "古い記録は期限で落ちる" + ": \(sm.lastScan.count)")
+
+        // 名前が1つも取れないスキャン＝切替候補が構造的に空になる状態
+        let blind = ScanManager()
+        blind.merge([ap(nil, nil, -40, ch: 6), ap(nil, nil, -55)])
+        expect(blind.namesUnavailable, "名前が取れないことを検出する")
+        expect(NetworkSwitcher.candidates(scan: blind.lastScan, current: l,
+                                          known: ["net"]).isEmpty,
+               "名前が無ければ候補は作れない")
     }
 
     // MARK: - グラフ描画

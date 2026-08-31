@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // 動作確認用: GUI を起動せずに自動起動の登録状態だけを出す
 if CommandLine.arguments.contains("--status") {
+    print("version:     \(Build.version)")
     print("bundle:      \(Bundle.main.bundleURL.path)")
     print("login item:  \(LoginItem.statusText)")
     print("stable path: \(LoginItem.isInStableLocation)")

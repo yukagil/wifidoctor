@@ -52,7 +52,10 @@ echo "==> arch: $ARCHS / minos: $BUILT_MIN"
 # 無ければ ad-hoc に落ちるが、その .app は自分の機械でしか動かない。
 if [ -n "${DEVELOPER_ID:-}" ]; then
   echo "==> signing (Developer ID)"
+  # wifi-info の権限が無いと、スキャン結果の SSID/BSSID が nil になり
+  # 「別のWi-Fiに切り替える」の候補が作れない。
   codesign --force --options runtime --timestamp \
+    --entitlements Resources/WiFiDoctor.entitlements \
     --sign "$DEVELOPER_ID" --identifier dev.yukagil.wifidoctor "$APP"
 else
   echo "==> signing (ad-hoc: この .app は他人の機械では Gatekeeper に止められる)"
@@ -70,6 +73,7 @@ rm -rf "$STAGE"
 cp -R "$APP" "$STAGE"
 if [ -n "${DEVELOPER_ID:-}" ]; then
   codesign --force --options runtime --timestamp \
+    --entitlements Resources/WiFiDoctor.entitlements \
     --sign "$DEVELOPER_ID" --identifier dev.yukagil.wifidoctor "$STAGE"
 else
   codesign --force --sign - --identifier dev.yukagil.wifidoctor "$STAGE"

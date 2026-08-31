@@ -139,6 +139,7 @@ final class AppState: ObservableObject {
         s.vpn = m.vpnInterface
         s.locationDenied = m.locationDenied
         s.measuring = m.verdict == .measuring
+        s.scanNamesUnavailable = m.scanner.namesUnavailable
         s.macWarn = m.load.busy || m.ownMbps >= 8
         s.macLine = Phrase.macLine(load: m.load, ownMbps: m.ownMbps,
                                    topTalker: m.topTalkers.first?.name)

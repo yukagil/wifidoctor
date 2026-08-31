@@ -509,10 +509,13 @@ struct SwitchingView: View {
                         LocationNotice(app: app,
                                        text: "位置情報の許可が無いため、近くのWi-Fiを調べられません")
                     } else if app.snap.candidates.isEmpty {
+                        let t = Phrase.noCandidates(
+                            locationDenied: false,
+                            namesUnavailable: app.snap.scanNamesUnavailable)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("切り替えられる回線が見つかりません")
+                            Text(t.title)
                                 .font(.system(size: 12, weight: .medium))
-                            Text("iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
+                            Text(t.body)
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -864,6 +867,9 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                         .frame(maxWidth: .infinity)
                 }
+                Text(Build.version)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
                 Button(action: quit) {
                     Label("WiFiDoctor を終了", systemImage: "power")
                         .font(.system(size: 12))
@@ -1022,7 +1028,7 @@ struct NamingView: View {
                                 LocationNotice(app: app,
                                                text: "位置情報の許可が無いため、どのAPかを識別できません")
                             } else {
-                                Text("接続していないため名前を付けられません")
+                                Text(Phrase.cannotName(locationDenied: false))
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                             }

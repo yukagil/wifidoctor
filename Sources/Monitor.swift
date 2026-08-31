@@ -114,7 +114,6 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     private var icmpFailStreak = 0
     private var gwTCPPort: UInt16?
     /// 計測方式。詳細画面に出して、利用者が値の意味を誤解しないようにする。
-    private(set) var gwMethod = "ping"
 
     private static func median(_ xs: [Double]) -> Double? {
         guard !xs.isEmpty else { return nil }
@@ -377,7 +376,6 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
             icmpFailStreak += 1
             if icmpFailStreak >= 3, let port = NetProbe.findTCPPort(ip) {
                 gwTCPPort = port
-                gwMethod = "TCP :\(port)"
                 return NetProbe.tcpPing(ip, port: port, count: count)
             }
         } else {
@@ -438,7 +436,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 if ip != self.gatewayIP {
                     self.gatewayIP = ip
                     // サブネットが変わったら計測方式の判定もやり直す
-                    self.gwTCPPort = nil; self.icmpFailStreak = 0; self.gwMethod = "ping"
+                    self.gwTCPPort = nil; self.icmpFailStreak = 0
                 }
                 self.recompute(); self.onUpdate?()
             }

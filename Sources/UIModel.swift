@@ -162,6 +162,9 @@ struct Snapshot {
     var locationDenied = false
     /// まだ一度も測れていない。「切れている」とは違う。
     var measuring = false
+    /// スキャンはできるのに、どのWi-Fiかの名前が取れない。
+    /// 署名に wifi-info の権限が無いとこうなる。切替候補が構造的に空になる。
+    var scanNamesUnavailable = false
     /// このMacの状態を1行で。切り分けの片側なので常時見えている必要がある。
     var macLine: String = ""
     var macWarn = false
@@ -201,6 +204,28 @@ enum Phrase {
         if verdict == .noInternet { return .bad }
         if verdict == .ok && score >= 80 { return .good }
         return score >= 60 ? .fair : .bad
+    }
+
+    /// 切り替え画面で候補が無いときの言い分け。
+    /// 「見つからない」「名前が読めない」「許可が無い」は別のことで、
+    /// 取り違えると事実と違うことを言う。
+    static func noCandidates(locationDenied: Bool,
+                             namesUnavailable: Bool) -> (title: String, body: String) {
+        if locationDenied {
+            return ("位置情報の許可が無いため、近くのWi-Fiを調べられません", "")
+        }
+        if namesUnavailable {
+            return ("近くのWi-Fiは見えていますが、名前が読めません",
+                    "このアプリの署名では、周りのWi-Fiの名前を取得できません。手動での切り替えをお使いください。")
+        }
+        return ("切り替えられる回線が見つかりません",
+                "iPhoneのテザリング、または有線接続がもっとも確実です。席を移すのも有効です。")
+    }
+
+    /// 呼び名を付けられないときの理由。接続中に「接続していない」と言わない。
+    static func cannotName(locationDenied: Bool) -> String {
+        locationDenied ? "位置情報の許可が無いため、どのAPかを識別できません"
+                       : "接続していないため名前を付けられません"
     }
 
     /// 通知の本文。
@@ -278,6 +303,11 @@ enum Phrase {
         // スキャン前に構造的な混雑だと言い切ると、後で覆る。
         if v == .congested, usableAPs == 1 {
             return "この場所はWi-Fi機器1台のみ。混雑は構造的で、つなぎ直しでは解消しません"
+        }
+        // VPN 中に経路をWi-Fi側へ限定できていないと、「自分→Wi-Fi機器」の値に
+        // トンネルの往復が乗る。混雑の誤判定になるので、断定しない。
+        if v == .congested, vpn != nil, !NetProbe.gatewayScoped {
+            return "VPN経由のため、この値にはVPNの往復も含まれます。混雑とは限りません"
         }
         if (v == .isp || v == .dns), vpn != nil {
             return "VPN経由のため、この遅延にはVPNの往復も含まれます"
@@ -573,5 +603,14 @@ enum Phrase {
         case (-75)...:   return "弱い"
         default:         return "とても弱い"
         }
+    }
+}
+
+/// 表示用のバージョン。配った後に「どのビルドか」を聞けるようにしておく。
+enum Build {
+    static var version: String {
+        let d = Bundle.main.infoDictionary
+        let v = d?["CFBundleShortVersionString"] as? String ?? "?"
+        return "WiFiDoctor \(v)"
     }
 }

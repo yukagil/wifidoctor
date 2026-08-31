@@ -26,6 +26,9 @@ final class ScanManager {
     private(set) var lastScanAt: Date?
     /// SSID が取れない(位置情報未許可)場合、同一SSID判定ができないので推定扱いになる。
     private(set) var ssidVisible = false
+    /// スキャンは返ってきたのに、1台も名前が取れなかった。
+    /// この状態だと切替候補は永久に空になるので、黙って「見つかりません」と出さない。
+    var namesUnavailable: Bool { lastScanAt != nil && !ssidVisible }
 
     private let q = DispatchQueue(label: "wifidoctor.scan")
 
@@ -60,11 +63,6 @@ final class ScanManager {
             }
             found.sort { $0.rssi > $1.rssi }
             DispatchQueue.main.async {
-                let now = Date()
-                for ap in found {
-                    let key = ap.bssid ?? "\(ap.ssid ?? "?")#\(ap.channel)"
-                    self.cache[key] = (ap, now)
-                }
                 for n in raw {
                     if let b = n.bssid, !b.isEmpty { self.cwByBSSID[b] = n }
                     if let ssid = n.ssid, !ssid.isEmpty {
@@ -73,13 +71,24 @@ final class ScanManager {
                         self.cwCache[ssid] = n
                     }
                 }
-                self.cache = self.cache.filter { now.timeIntervalSince($0.value.at) < self.ttl }
-                self.lastScanAt = now
-                self.ssidVisible = self.cache.values.contains { $0.ap.ssid != nil }
+                self.merge(found)
                 self.writeDiagnostic(found)
                 completion(self.lastScan)
             }
         }
+    }
+
+    /// 取り込みと期限切れの整理。実機のスキャンを起こさずに検証できるよう分けてある。
+    /// （テストが本物のスキャンを走らせると、利用者のWi-Fiを一瞬乱すうえ、
+    ///   結果が環境で変わって検証にならない）
+    func merge(_ found: [SeenAP], at now: Date = Date()) {
+        for ap in found {
+            let key = ap.bssid ?? "\(ap.ssid ?? "?")#\(ap.channel)"
+            cache[key] = (ap, now)
+        }
+        cache = cache.filter { now.timeIntervalSince($0.value.at) < ttl }
+        lastScanAt = now
+        ssidVisible = cache.values.contains { $0.ap.ssid != nil }
     }
 
     /// スキャン結果の素の内容をファイルに残す。
