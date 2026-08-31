@@ -358,13 +358,16 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 if load.cpuPercent == 0 { load.cpuPercent = self.load.cpuPercent }
                 self.load = load
                 self.updateThroughput(c)
+                // 測っている間に経路が変わっていないか。上書きする前に見る。
+                let sameRoute = self.gatewayIP == nil || self.gatewayIP == ip
                 self.gatewayIP = ip
                 self.routeChecked = true
                 self.gw = g
                 if let g { self.gwHistory.append(g); if self.gwHistory.count > 3 { self.gwHistory.removeFirst() } }
                 // 計測方式の更新は main で戻す。背景で書くと、経路が変わったときの
                 // 初期化（tickWAN の完了ブロック）と競合する。
-                if let hop, ip == self.gatewayIP {
+                // 経路が変わっていたなら、その初期化を古い値で押し戻さない。
+                if let hop, sameRoute {
                     self.gwTCPPort = hop.port
                     self.icmpFailStreak = hop.failStreak
                 }
