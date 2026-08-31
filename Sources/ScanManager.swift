@@ -100,7 +100,7 @@ final class ScanManager {
         t += "取得数 \(found.count) / SSIDが取れた数 \(found.filter { $0.ssid != nil }.count)"
         t += " / BSSIDが取れた数 \(found.filter { $0.bssid != nil }.count)\n"
         for a in found.prefix(12) {
-            t += "  ssid=\(a.ssid ?? "<nil>") bssid=\(a.bssid ?? "<nil>")"
+            t += "  ssid=\(a.ssid?.safeForText ?? "<nil>") bssid=\(a.bssid?.safeForText ?? "<nil>")"
             t += " rssi=\(a.rssi) ch\(a.channel) \(a.band)GHz\n"
         }
         try? t.write(to: SampleLog.dir.appendingPathComponent("lastscan.txt"),

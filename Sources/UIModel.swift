@@ -638,6 +638,10 @@ enum Build {
     static var version: String {
         let d = Bundle.main.infoDictionary
         let v = d?["CFBundleShortVersionString"] as? String ?? "?"
-        return "WiFiDoctor \(v)"
+        let b = d?["CFBundleVersion"] as? String
+        let c = d?["BuildCommit"] as? String
+        // 配った後に「どのビルドか」を聞けるように、番号とコミットまで出す
+        let suffix = [b, c].compactMap { $0 }.joined(separator: " ")
+        return suffix.isEmpty ? "WiFiDoctor \(v)" : "WiFiDoctor \(v) (\(suffix))"
     }
 }

@@ -241,10 +241,14 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
         // 壁時計が後ろへ飛ぶ（手動変更・大きなNTP補正・VM復帰）と、次回時刻が
         // 未来のまま残り、時計が追いつくまで計測が全部止まる。しかも自力では戻らない。
         // 予定が「今＋間隔」より先にあるのは時計が戻った証拠なので、今に引き戻す。
+        // 間隔をきっちり守ると、外向きの ping が一定周期で並ぶ。
+        // 監視から見ると、これは実装の都合ではなく「規則正しく外部と話し続ける」
+        // 振る舞い＝ビーコンの特徴そのものになる。少しばらす。
         func due(_ next: inout Date, _ interval: TimeInterval) -> Bool {
-            if next > now.addingTimeInterval(interval) { next = now }
+            if next > now.addingTimeInterval(interval * 1.3) { next = now }
             guard now >= next else { return false }
-            next = now.addingTimeInterval(interval)
+            let jitter = Double.random(in: -0.15...0.15) * interval
+            next = now.addingTimeInterval(interval + jitter)
             return true
         }
         if due(&nextLink, linkInterval)   { tickLink() }

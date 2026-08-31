@@ -38,6 +38,22 @@ enum Settings {
     /// 本物の設定を使っていないこと。書き換える側のテストはこれを確かめてから動く。
     static var isTemporary: Bool { !(store is UserDefaults) }
 
+    /// 管理側（MDM の構成プロファイル）から止められる機能。
+    ///
+    /// 端末の状態を変える操作と、暗号化なしのWi-Fiへの接続は、
+    /// 会社によっては持たせたくない。プロファイルは同じドメインに降りてくるので、
+    /// 既定は「使える」で、明示的に false が入っていたときだけ止める。
+    enum Managed {
+        /// つなぎ直し（Wi-Fiの電源を入れ直す）と、別のWi-Fiへの切り替え。
+        static var allowsNetworkChange: Bool {
+            store.object(forKey: "allowNetworkChange") as? Bool ?? true
+        }
+        /// 暗号化なしのWi-Fiを候補として出すか。
+        static var allowsOpenNetworks: Bool {
+            store.object(forKey: "allowOpenNetworks") as? Bool ?? true
+        }
+    }
+
     /// 窓の位置の保存名。テスト中は保存させない（利用者が調整したサイズを潰すため）。
     static func windowAutosaveName(_ base: String) -> String? {
         isTemporary ? nil : base

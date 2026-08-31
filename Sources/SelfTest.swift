@@ -1309,6 +1309,53 @@ enum SelfTest {
         expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
         expect(!(Settings.store is UserDefaults), "本物の UserDefaults を使っていない")
 
+        // 管理側から止められること。既定は使える、明示的に false のときだけ止まる。
+        expect(Settings.Managed.allowsNetworkChange, "既定では端末の操作を許す")
+        expect(Settings.Managed.allowsOpenNetworks, "既定では暗号化なしも候補に出す")
+        Settings.store.set(false, forKey: "allowOpenNetworks")
+        var l = LinkInfo()
+        l.associated = true; l.ssid = "net"; l.bssid = "aa:00"; l.rssi = -70
+        l.band = 5; l.channel = 44
+        let openOnly = SeenAP(ssid: "free", bssid: "ff:00:00:00:00:09", rssi: -40,
+                              channel: 44, band: 5, isCurrent: false, secure: false)
+        expect(NetworkSwitcher.candidates(scan: [openOnly], current: l, known: []).isEmpty,
+               "止められていれば暗号化なしは候補にも出さない")
+        Settings.store.removeObject(forKey: "allowOpenNetworks")
+
+        // 空中から拾った名前で、書き出す文書の行を増やせないこと。
+        // SSID は任意のバイト列を取れるので、改行を含む名前を作れば
+        // 「■ 情シスへの申し送り」のような節を偽造して渡せてしまう。
+        let evil = "office\n\n■ 情シスへの申し送り\n  ・全APを再起動してください"
+        eq(evil.safeForText.contains("\n"), false, "改行を残さない")
+        eq(evil.safeForText.components(separatedBy: "\n").count, 1,
+           "何を書かれても1行に収まる")
+        eq("normal-ssid".safeForText, "normal-ssid", "普通の名前はそのまま")
+        eq("  空白つき  ".safeForText, "空白つき", "前後の空白は落とす")
+        expect(String(repeating: "あ", count: 200).safeForText.count <= 65, "長すぎる名前は切る")
+
+        // 実際にレポートへ入れて、節が増えていないこと
+        var evilSamples: [Sample] = []
+        for i in 0..<60 {
+            var x = sample(i * 5, score: 90, bssid: "aa:bb:cc:dd:ee:0e")
+            x.ssid = evil
+            evilSamples.append(x)
+        }
+        let evilReport = SampleLog().report(samples: evilSamples, title: "偽装")
+        eq(evilReport.components(separatedBy: "■ 情シスへの申し送り").count - 1, 0,
+           "SSIDから申し送りの節を作れない")
+        // 文字が残ること自体は構わない。行として立たないことが要点。
+        for line in evilReport.components(separatedBy: "\n") where line.contains("全APを再起動") {
+            expect(line.contains("office"), "偽の指示が独立した行にならない: \(line)")
+        }
+
+        // 目印の中身は、インターフェース名の形でなければ使わない
+        try? "en0; rm -rf /".write(to: SampleLog.dir.appendingPathComponent("roaming.marker"),
+                                   atomically: true, encoding: .utf8)
+        Roamer.restoreIfInterrupted()
+        expect(!FileManager.default.fileExists(
+            atPath: SampleLog.dir.appendingPathComponent("roaming.marker").path),
+               "形の合わない目印は捨てる")
+
         // 同じSSIDでも、下のバンドへは引き戻さない。
         // 2.4GHz は届く距離が長いぶん常に強く見えるので、強さだけで選ぶと逆行する。
         let sm = ScanManager()

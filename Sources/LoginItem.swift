@@ -27,7 +27,9 @@ enum LoginItem {
         case .enabled:          return "有効"
         case .requiresApproval: return "承認待ち（システム設定 > 一般 > ログイン項目 で許可）"
         case .notRegistered:
-            return FileManager.default.fileExists(atPath: agentURL.path) ? "有効（LaunchAgent）" : "無効"
+            // 署名が無いと登録自体ができない。理由を出さないと、
+            // 入れたのに効かない状態のまま放置される。
+            return "登録できません（署名されたアプリでないと自動起動を設定できません）"
         case .notFound:         return "未登録"
         @unknown default:       return "不明"
         }
@@ -41,39 +43,27 @@ enum LoginItem {
     }
 
     /// 有効化/無効化。成功可否と、どちらの方式になったかを返す。
+    ///
+    /// 登録に失敗しても LaunchAgent は書かない。
+    /// 署名が無いと `SMAppService.register()` は必ず失敗するので、
+    /// そこで plist を書くと「未署名のバイナリが自分で永続化する」形になり、
+    /// 端末の監視から見て侵入後の常駐と区別が付かない。
+    /// システム設定に出ないので、利用者も情シスも止められない。
     @discardableResult
     static func set(_ on: Bool) -> (ok: Bool, method: String) {
         if on {
             do {
                 try SMAppService.mainApp.register()
-                removeAgent()                       // 二重起動を防ぐ
+                removeAgent()                       // 以前の版が書いたものを片付ける
                 return (true, "ログイン項目")
             } catch {
-                return (writeAgent(), "LaunchAgent")
+                removeAgent()
+                return (false, "")
             }
         } else {
             try? SMAppService.mainApp.unregister()
             removeAgent()
             return (true, "")
-        }
-    }
-
-    private static func writeAgent() -> Bool {
-        let plist: [String: Any] = [
-            "Label": agentID,
-            "ProgramArguments": [execPath],
-            "RunAtLoad": true,
-            "KeepAlive": false,
-        ]
-        do {
-            try FileManager.default.createDirectory(
-                at: agentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try PropertyListSerialization.data(
-                fromPropertyList: plist, format: .xml, options: 0)
-            try data.write(to: agentURL)
-            return true
-        } catch {
-            return false
         }
     }
 

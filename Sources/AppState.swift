@@ -155,8 +155,11 @@ final class AppState: ObservableObject {
 
         // 「切り替える」を主ボタンに出すのは、実際に良くなりそうな候補があるときだけ。
         // 逃げ場が1台も無いなら、押せるボタンを出しても嘘になる
-        let stuck = m.verdict == .congested && s.usableAPs <= 1
-                    && m.scanner.lastScanAt != nil
+        // 逃げ場が1台も無いなら、押せるボタンを出しても嘘になる
+        let noEscape = m.verdict == .congested && s.usableAPs <= 1
+                       && m.scanner.lastScanAt != nil
+        // 管理側で端末の状態を変える操作を止めているなら、そもそも押させない
+        let stuck = noEscape || !Settings.Managed.allowsNetworkChange
         s.primary = stuck ? .none
             : Phrase.primary(for: m.verdict,
                              hasAlternatives: s.candidates.contains { $0.recommended })
@@ -461,6 +464,11 @@ final class AppState: ObservableObject {
     /// 「つなぎ直す」。切断を伴うので、押した本人に結果まで見せて完結させる。
     func reconnect() {
         guard busy == nil else { return }
+        // 管理側で止められていれば実行しない（画面から消すだけでは足りない）
+        guard Settings.Managed.allowsNetworkChange else {
+            flash = "この操作は管理者によって無効にされています"
+            return
+        }
         let before = monitor.linkForDisplay
         busy = "つなぎ直しています…"
         flash = nil
@@ -602,6 +610,10 @@ final class AppState: ObservableObject {
     /// 別のWi-Fiへ切り替える。混雑から逃げるための主操作。
     func switchTo(_ c: NetworkCandidate) {
         guard busy == nil else { return }
+        guard Settings.Managed.allowsNetworkChange else {
+            flash = "この操作は管理者によって無効にされています"
+            return
+        }
         busy = "\(c.ssid) に切り替えています…"
         flash = nil
         NetworkSwitcher.connect(ssid: c.ssid,

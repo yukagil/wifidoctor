@@ -35,7 +35,13 @@ enum Roamer {
 
     /// 起動時に呼ぶ。前回つなぎ直しの途中で落ちていたら、Wi-Fi を戻す。
     static func restoreIfInterrupted() {
-        guard let iface = try? String(contentsOf: markURL, encoding: .utf8), !iface.isEmpty else {
+        // このファイルは利用者権限で書ける場所にある。中身をそのまま
+        // networksetup の引数へ渡さない（インターフェース名の形だけを受け付ける）。
+        guard let raw = try? String(contentsOf: markURL, encoding: .utf8) else { return }
+        let iface = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard iface.count <= 16,
+              iface.range(of: "^[a-z]{2,5}[0-9]{1,3}$", options: .regularExpression) != nil else {
+            clearPowerOffMark()
             return
         }
         clearPowerOffMark()

@@ -131,6 +131,8 @@ enum NetworkSwitcher {
         var out: [NetworkCandidate] = []
         for (ssid, ap) in best {
             guard ssid != current.ssid else { continue }
+            // 管理側で止められていれば、暗号化なしは候補にも出さない
+            guard ap.secure || Settings.Managed.allowsOpenNetworks else { continue }
             // 弱すぎるものは繋いでも悪化するだけなので落とす
             guard ap.rssi >= -80 else { continue }
 

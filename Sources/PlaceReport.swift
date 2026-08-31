@@ -161,7 +161,7 @@ enum PlaceReport {
 
             return PlaceSummary(
                 key: key,
-                name: grouping == .ap ? (APNames.label(for: key) ?? key) : key,
+                name: (grouping == .ap ? (APNames.label(for: key) ?? key) : key).safeForText,
                 // 呼び名を付けていなければ名前に短縮IDが入る。そこで繰り返さない。
                 sub: grouping == .ap ? a.ssid : "AP \(a.bssids.count)台",
                 seconds: a.seconds,

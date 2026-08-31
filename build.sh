@@ -34,6 +34,14 @@ lipo -create build/wd-arm64 build/wd-x86_64 -output "$APP/Contents/MacOS/WiFiDoc
 rm -f build/wd-arm64 build/wd-x86_64
 
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+
+# ビルド番号を採番する。同じ 1.0 のまま配ると、受け取った側も情シスも
+# 「どのビルドか」を確かめられない（ad-hoc 署名は再ビルドごとに別アプリ扱い）。
+BUILD_NO=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+BUILD_ID=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NO" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :BuildCommit string $BUILD_ID" "$APP/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Set :BuildCommit $BUILD_ID" "$APP/Contents/Info.plist"
 [ -f Resources/WiFiDoctor.icns ] && cp Resources/WiFiDoctor.icns "$APP/Contents/Resources/"
 
 # 宣言どおりの最低OSでビルドされたかを、バイナリ側から確かめる。

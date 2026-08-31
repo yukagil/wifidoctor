@@ -195,3 +195,19 @@ extension JSONEncoder {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
     }()
 }
+
+extension String {
+    /// 空中から拾った名前（SSID）や、利用者が付けた呼び名を文書に入れるときの整形。
+    ///
+    /// SSID は任意のバイト列を取れるので、改行を含む名前を作れば、
+    /// 書き出したレポートに行を足して「■ 情シスへの申し送り」のような節を
+    /// 偽造できる。渡された相手はアプリが書いたものと区別できない。
+    var safeForText: String {
+        let flattened = unicodeScalars.map { s -> String in
+            if s == "\n" || s == "\r" || s == "\t" { return " " }
+            return CharacterSet.controlCharacters.contains(s) ? "" : String(s)
+        }.joined()
+        let trimmed = flattened.trimmingCharacters(in: .whitespaces)
+        return trimmed.count > 64 ? String(trimmed.prefix(64)) + "…" : trimmed
+    }
+}
