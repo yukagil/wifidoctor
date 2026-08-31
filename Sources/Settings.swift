@@ -17,10 +17,30 @@ enum Settings {
     @discardableResult
     static func useTemporaryStore() -> String {
         cleanUpTemporaryStores()   // 自分が前に作ったぶんを孤児にしない
+        removeStale()              // 落ちて残ったぶん
         let name = testPrefix + UUID().uuidString
         store = UserDefaults(suiteName: name) ?? .standard
         temporaryName = name
         return name
+    }
+
+    /// 途中で落ちると後始末が走らないので、十分に古いものだけを消す。
+    /// 「残っているもの全部」を消すと、同時に走っている別のテストのものを壊す。
+    private static func removeStale(olderThan: TimeInterval = 600) {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences")
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            return
+        }
+        let now = Date()
+        for f in files where f.hasPrefix(testPrefix) && f.hasSuffix(".plist") {
+            let url = dir.appendingPathComponent(f)
+            let at = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? now
+            guard now.timeIntervalSince(at) > olderThan else { continue }
+            UserDefaults.standard.removePersistentDomain(forName: String(f.dropLast(6)))
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// 自分が作ったぶんだけを片付ける。

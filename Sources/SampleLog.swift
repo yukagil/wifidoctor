@@ -23,6 +23,17 @@ final class SampleLog {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("WiFiDoctorTest-\(UUID().uuidString)", isDirectory: true)
         cleanUpTemporaryDirectory()   // 自分が前に作ったぶんを孤児にしない
+        // 落ちて残ったぶんも片付ける。同時に走っているものを壊さないよう、古いものだけ。
+        let base = URL(fileURLWithPath: NSTemporaryDirectory())
+        if let old = try? FileManager.default.contentsOfDirectory(atPath: base.path) {
+            let now = Date()
+            for n in old where n.hasPrefix("WiFiDoctorTest-") {
+                let u = base.appendingPathComponent(n)
+                let at = (try? u.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? now
+                if now.timeIntervalSince(at) > 600 { try? FileManager.default.removeItem(at: u) }
+            }
+        }
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         temporaryDir = tmp
         dir = tmp
