@@ -155,9 +155,12 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     /// 「Wi-Fiが壊れている」という表示のまま自力で戻れない。
     var localNetworkBlocked: Bool {
         guard link.associated, gatewayIP != nil else { return false }
-        // 第一ホップが全損なのに、その先には出られている＝経路ではなく許可の問題
+        // 第一ホップが全損なのに、その先には出られている＝経路ではなく許可の問題。
         guard let g = gw, g.loss >= 100 else { return false }
-        return (wanForDisplay?.loss ?? 100) < 100
+        guard (wanForDisplay?.loss ?? 100) < 100 else { return false }
+        // ただし ICMP だけを落とすルータは珍しくない。その場合は TCP へ切り替わるので、
+        // 「切り替えを試したうえで、それも通らなかった」ときだけ許可を疑う。
+        return gwTCPPort == nil && icmpFailStreak >= 3
     }
 
     /// 位置情報が無くて接続先を識別できていないか。

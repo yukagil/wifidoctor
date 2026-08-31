@@ -143,8 +143,11 @@ enum NetProbe {
     ///
     /// 22（SSH）や 7（echo）まで叩くと、社内の監視からはポート探索に見える。
     /// 相手はゲートウェイなので、Web と DNS が開いていれば足りる。
+    /// 叩いてよいポート。増やすと監視からは探索行為に見える。
+    static let tcpProbePorts: [UInt16] = [80, 443, 53]
+
     static func findTCPPort(_ host: String) -> UInt16? {
-        for p: UInt16 in [80, 443, 53] {
+        for p in tcpProbePorts {
             if tcpConnectMS(host, p, timeout: 1.0) != nil { return p }
         }
         return nil

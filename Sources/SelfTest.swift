@@ -1310,6 +1310,31 @@ enum SelfTest {
         // 「片付ける関数が、自分の作ったものを片付けるか」を見る。
         expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
 
+        // 暗号化なしのWi-Fiを、長所として推薦しないこと。
+        // 名前を真似た偽のAPと本物は、この一覧では見分けが付かない。
+        let openAP = SeenAP(ssid: "free-wifi", bssid: "ff:00:00:00:00:01", rssi: -40,
+                            channel: 44, band: 5, isCurrent: false, secure: false)
+        var here = LinkInfo()
+        here.associated = true; here.ssid = "net"; here.bssid = "aa:00"; here.rssi = -70
+        here.band = 5; here.channel = 44
+        let cands = NetworkSwitcher.candidates(scan: [openAP], current: here, known: [])
+        if let c = cands.first {
+            expect(!c.recommended, "一度も繋いだことのない暗号化なしを推薦しない")
+            expect(c.needsCaution, "押す前に確認が要る印を立てる")
+            expect(!c.reason.contains("パスワード不要"), "暗号化なしを長所として書かない")
+            expect(c.reason.contains("暗号化なし"), "暗号化されていないことを言う: \(c.reason)")
+        } else {
+            expect(false, "候補が作られない")
+        }
+        // 一度繋いだことがあるなら、利用者が選んだ先なので確認は挟まない
+        let knownOpen = NetworkSwitcher.candidates(scan: [openAP], current: here,
+                                                   known: ["free-wifi"]).first
+        expect(knownOpen?.needsCaution == false, "既知の先には確認を挟まない")
+
+        // 探索するポートを広げない（社内の監視からはポート探索に見える）
+        expect(!NetProbe.tcpProbePorts.contains(22) && !NetProbe.tcpProbePorts.contains(7),
+               "SSH や echo は叩かない: \(NetProbe.tcpProbePorts)")
+
         // 通知は画面と同じ平易な言葉で出すこと
         for v in Verdict.allCases where v.isProblem {
             expect(!Phrase.headline(v).contains("AP以降"),
