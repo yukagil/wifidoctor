@@ -74,11 +74,11 @@ if CommandLine.arguments.contains("--roamtest") {
     exit(0)
 }
 
-/// テストが使った一時的な置き場所は、最後に一度だけ片付ける。
-/// 途中で片付けると、以降のテストが本物のデータと設定を触る。
+/// テストが使った一時的な記録フォルダは、最後に一度だけ片付ける。
+/// 途中で片付けると、以降のテストが本物のデータを触る。
+/// 設定はメモリ上なので、プロセスが終われば消える。
 func finishTests(_ code: Int32) -> Never {
     SampleLog.cleanUpTemporaryDirectory()
-    Settings.cleanUpTemporaryStores()
     exit(code)
 }
 
