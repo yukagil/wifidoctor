@@ -1218,60 +1218,112 @@ final class HistoryWindowController: NSWindowController {
 
     /// 上の帯と下の行を、同じ選択状態から一度に描き直す。
     /// 別々に更新すると、片方だけ古い状態が残って話が食い違う。
+    /// 集計の結果。作るのは重いので、まとめて作ってから一度に描く。
+    private struct Computed {
+        var places: [PlaceSummary]
+        var rows: [PlaceSummary]
+        var hours: [HourSummary]
+        var focus: ([Sample], [TimeInterval])
+    }
+
+    /// 描き直しの世代。裏で作っている間に選択が変わったら、古い結果は捨てる。
+    private var renderGeneration = 0
+
+    /// この件数を超えたら裏で集計する。
+    /// 30日ぶんは10万件を超え、選択のたびに全部やり直すと操作が引っかかる。
+    /// 少ないうちに裏へ回すと、描き直しが1拍遅れて見えるだけで損。
+    private static let asyncThreshold = 20_000
+
+    /// 上の帯と下の行を、同じ選択状態から一度に描き直す。
+    /// 別々に更新すると、片方だけ古い状態が残って話が食い違う。
     private func render() {
-        // 代表秒数は全部の集計の土台になる。中で sort が走るので一度だけ求めて配って回る。
-        let durs = Sample.durations(current)
-        places = PlaceReport.summaries(current, by: grouping, durations: durs)
-        if selectedKey != nil, !places.contains(where: { $0.key == selectedKey }) {
-            selectedKey = nil
+        renderGeneration += 1
+        let generation = renderGeneration
+        let samples = current
+        let grouping = self.grouping
+        let hour = selectedHour
+        let key = selectedKey
+        let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
+
+        // 文字だけの更新は待たせない
+        hoursTitle.stringValue = days > 1
+            ? "時間帯ごとの調子（\(days)日ぶんの合計）" : "時間ごとの調子"
+        hoursHint.stringValue = defaultHint
+        placesTitle.stringValue = hour.map { "\($0)時台につないでいた先" }
+            ?? "つないでいた先を比べる"
+        clearButton.isHidden = key == nil && hour == nil
+
+        let work = { HistoryWindowController.compute(samples, grouping: grouping,
+                                                     hour: hour, key: key) }
+        if samples.count < HistoryWindowController.asyncThreshold {
+            show(work(), days: days)
+        } else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let c = work()
+                DispatchQueue.main.async {
+                    guard generation == self.renderGeneration else { return }
+                    self.show(c, days: days)
+                }
+            }
         }
+    }
+
+    /// 画面に触らない集計。裏でも同じものを作れるように分けてある。
+    private static func compute(_ samples: [Sample], grouping: PlaceGrouping,
+                                hour: Int?, key: String?) -> Computed {
+        // 代表秒数は全部の集計の土台になる。中で sort が走るので一度だけ求めて配って回る。
+        let durs = Sample.durations(samples)
+        let places = PlaceReport.summaries(samples, by: grouping, durations: durs)
 
         // 下の行は「選んだ時間だけ」に切り替わる。
         // 帯は1日を見渡すものなので常に全時間ぶんを描き、選択外を薄くする（消さない）。
         let cal = Calendar.current
-        let (tableSamples, tableDurs) = selectedHour.map { h in
-            slice(current, durs) { cal.component(.hour, from: $0.at) == h }
-        } ?? (current, durs)
-        rows = PlaceReport.summaries(tableSamples, by: grouping, durations: tableDurs)
-
-        let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
-        hourStrip.places = places
-        hourStrip.hours = HourReport.hours(current, by: grouping, durations: durs)
-        hourStrip.days = days
-        hourStrip.selectedKey = selectedKey
-        hourStrip.selectedHour = selectedHour
-        hoursTitle.stringValue = days > 1
-            ? "時間帯ごとの調子（\(days)日ぶんの合計）" : "時間ごとの調子"
-        hoursHint.stringValue = defaultHint
-
-        placesTitle.stringValue = selectedHour.map { "\($0)時台につないでいた先" }
-            ?? "つないでいた先を比べる"
-        clearButton.isHidden = selectedKey == nil && selectedHour == nil
-
-        renderRows()
+        let table = hour.map { h in
+            slice(samples, durs) { cal.component(.hour, from: $0.at) == h }
+        } ?? (samples, durs)
 
         // 結論・グラフ・書き出しは、いま画面が見せている範囲と同じものを見る。
         // ここがずれると、12時台を選んで書き出したのに丸1日分が出る。
-        let (focusSamples, focusDurs) = focused(tableSamples, tableDurs)
-        renderVerdict(focusSamples, focusDurs, days: days)
-        detailSamples = focusSamples
+        var focus = table
+        if let key, places.contains(where: { $0.key == key }) {
+            focus = slice(table.0, table.1) {
+                (grouping == .ap ? $0.bssid : $0.ssid) == key
+            }
+        }
+        return Computed(places: places,
+                        rows: PlaceReport.summaries(table.0, by: grouping, durations: table.1),
+                        hours: HourReport.hours(samples, by: grouping, durations: durs),
+                        focus: focus)
+    }
+
+    private func show(_ c: Computed, days: Int) {
+        places = c.places
+        if selectedKey != nil, !places.contains(where: { $0.key == selectedKey }) {
+            selectedKey = nil
+            clearButton.isHidden = selectedHour == nil
+        }
+        rows = c.rows
+
+        hourStrip.places = places
+        hourStrip.hours = c.hours
+        hourStrip.days = days
+        hourStrip.selectedKey = selectedKey
+        hourStrip.selectedHour = selectedHour
+
+        renderRows()
+        renderVerdict(c.focus.0, c.focus.1, days: days)
+        detailSamples = c.focus.0
         if showsDetail { renderDetail() }
     }
 
     /// 標本とその代表秒数を、対にしたまま絞り込む。
-    private func slice(_ s: [Sample], _ d: [TimeInterval],
-                       _ keep: (Sample) -> Bool) -> ([Sample], [TimeInterval]) {
+    private static func slice(_ s: [Sample], _ d: [TimeInterval],
+                              _ keep: (Sample) -> Bool) -> ([Sample], [TimeInterval]) {
         var os: [Sample] = [], od: [TimeInterval] = []
         for (i, x) in s.enumerated() where keep(x) { os.append(x); od.append(d[i]) }
         return (os, od)
     }
 
-    /// 選んだ先に絞る。行の選択は「その先の話をする」という意味なので、
-    /// 結論もグラフも書き出しも同じ範囲を見る。
-    private func focused(_ s: [Sample], _ d: [TimeInterval]) -> ([Sample], [TimeInterval]) {
-        guard let key = selectedKey else { return (s, d) }
-        return slice(s, d) { (grouping == .ap ? $0.bssid : $0.ssid) == key }
-    }
 
     private func renderRows() {
         placeStack.arrangedSubviews.forEach {

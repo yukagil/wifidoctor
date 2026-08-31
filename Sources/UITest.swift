@@ -520,8 +520,19 @@ enum UITest {
         wc.apply(many)
         w.layoutIfNeeded()
         let took = Date().timeIntervalSince(t0)
-        expect(took < 2.0, String(format: "10万件の描き直しに %.1f秒かかっている", took))
-        print(String(format: "  10万件の描き直し: %.2f秒", took))
+        expect(took < 0.2, String(format: "10万件で main が %.2f秒 握られている", took))
+        print(String(format: "  10万件の描き直し（main占有）: %.2f秒", took))
+
+        // 裏で集計しているので、結果が実際に届くところまで見る。
+        // 時間だけ見ていると、非同期の経路が壊れても速いまま合格してしまう。
+        let deadline = Date().addingTimeInterval(5)
+        while find(CompareRow.self, in: w.contentView).isEmpty, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        w.layoutIfNeeded()
+        let bigRows = find(CompareRow.self, in: w.contentView)
+        expect(bigRows.count == 2, "裏で集計した結果が画面に届く: \(bigRows.count)行")
+        expect(bigRows.allSatisfy { $0.frame.width > 300 }, "届いた行が潰れていない")
 
         w.close()
     }

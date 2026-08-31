@@ -1261,6 +1261,30 @@ enum SelfTest {
         eq(NetProbe.parseGateway("route to: default\n  interface: en0"), nil,
            "ゲートウェイが無ければ nil")
 
+        // VPN が既定経路を持っていても、Wi-Fi 側のゲートウェイを先に見ること。
+        // ここを間違えると、トンネルの対向までの往復を「自分→Wi-Fi機器」として
+        // 表示し、恒常的に「混雑」と誤診断する。
+        let wifiRoute = "   route to: default\n   gateway: 192.168.0.1\n  interface: en0"
+        var asked: [[String]] = []
+        let picked = NetProbe.gateway(interface: "en0") { args in
+            asked.append(args)
+            return args.contains("-ifscope") ? wifiRoute : viaVPN
+        }
+        eq(picked, "192.168.0.1", "VPN中でもWi-Fi側のゲートウェイを測る")
+        expect(asked.first?.contains("-ifscope") ?? false, "先にインターフェースを指定して引く")
+        eq(asked.count, 1, "取れたら全域の経路は引かない")
+
+        // 指定が使えない環境では全域の経路へ退避する
+        asked = []
+        let fallback = NetProbe.gateway(interface: "en0") { args in
+            asked.append(args)
+            return args.contains("-ifscope") ? "route: bad address" : wifiRoute
+        }
+        eq(fallback, "192.168.0.1", "指定が使えなければ全域の経路で引き直す")
+        eq(asked.count, 2, "退避したときだけ2回引く")
+        eq(NetProbe.gateway(interface: nil) { _ in wifiRoute }, "192.168.0.1",
+           "インターフェース指定が無くても引ける")
+
         // 良し悪しの物差しが画面ごとに違わないこと。
         // 点数だけで決めると「80点＝快適」の隣に「崩れた時間 2時間39分」が並ぶ。
         expect(Phrase.level(score: 85, badRatio: 0.05) == .good, "点が高く崩れも短ければ快適")

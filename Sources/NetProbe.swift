@@ -37,12 +37,19 @@ enum NetProbe {
     /// 「自分 → Wi-Fi機器」として測った値がインターネット越しの往復になる。
     /// 12ms の閾値をまず超えるので、混雑していなくても恒常的に「混雑」と誤診断していた。
     static func defaultGateway(interface: String? = nil) -> String? {
+        gateway(interface: interface) { args in
+            run("/sbin/route", args, timeout: 3)
+        }
+    }
+
+    /// route の呼び出しを差し替えられる形。優先順そのものを検証できるようにしてある。
+    /// インターフェース指定を先に試し、取れなければ全域の経路へ退避する。
+    static func gateway(interface: String?, run: ([String]) -> String) -> String? {
         if let interface, !interface.isEmpty {
-            let scoped = run("/sbin/route", ["-n", "get", "-ifscope", interface, "default"],
-                             timeout: 3)
+            let scoped = run(["-n", "get", "-ifscope", interface, "default"])
             if let ip = parseGateway(scoped) { return ip }
         }
-        return parseGateway(run("/sbin/route", ["-n", "get", "default"], timeout: 3))
+        return parseGateway(run(["-n", "get", "default"]))
     }
 
     /// 実際に route を叩かずに検証できるよう分離してある。
