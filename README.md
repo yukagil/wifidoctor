@@ -151,6 +151,13 @@ xcrun stapler staple build/WiFiDoctor.app
 
 依存ライブラリなし。Swift と macOS 標準フレームワークのみ。
 
+アイコンはコードから描いている。作り直すときは:
+
+```sh
+swift Tools/make_icon.swift        # Resources/WiFiDoctor.icns を書き出す
+./build.sh
+```
+
 ## テスト
 
 ```sh
