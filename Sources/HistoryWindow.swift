@@ -51,67 +51,60 @@ final class ChartView: NSView {
         return min(cap, max(f, (p95 * 1.25 / 10).rounded(.up) * 10))
     }
 
-    /// 体感を決める順に並べる。
-    /// 平均遅延が良くてもジッタと損失が悪ければ会議は乱れるので、その2つを独立して見せる。
     /// 系列の色。良し悪しを表す緑/橙/赤は使わない（同じ色が2つの意味を持つと読めない）。
-    /// 「自分→AP」と「インターネット」は経路の区間なので、どの系列でも同じ色に固定する。
+    /// 「自分→AP」と「その先」は経路の区間なので、どの段でも同じ色に固定する。
     private enum Ink {
         static let toAP: NSColor = .systemBlue        // 自分 → Wi-Fi機器
         static let toNet: NSColor = .systemPurple     // その先
         static let value: NSColor = .systemTeal       // 区間に属さない単独の値
     }
 
+    /// 体感を決める順に並べる。
+    /// 平均遅延が良くてもジタと損失が悪ければ会議は乱れるので、その2つを独立して見せる。
+    ///
+    /// 系列は絞る。狭い縦幅に5つ積むと1つあたりが潰れて、線の形が読めなくなる。
+    /// リンク速度は「規格上の接続速度で実効ではない」と注記が要る値なので、
+    /// ここでは出さない（数値は断面表示で見られる）。
     private var series: [Series] {
         let rttHi = upper(samples.compactMap { $0.gwRTT } + samples.compactMap { $0.netRTT },
                           floor: 30, cap: 500)
         let jitHi = upper(samples.compactMap { $0.gwJitter }, floor: 10, cap: 200)
         let lossHi = upper(samples.compactMap { $0.gwLoss } + samples.compactMap { $0.netLoss },
                            floor: 10, cap: 100)
-        let mbpsHi = upper(samples.map { $0.txRate }, floor: 200, cap: 2400)
         let ms: (Double) -> String = { String(format: "%.0f", $0) }
 
         return [
-            Series(title: "応答の速さ（ms）",
-                   note: "低いほど良い",
-                   lo: 0, hi: rttHi,
+            Series(title: "応答 ms", note: "低いほど良い", lo: 0, hi: rttHi,
                    lines: [
                     Line(title: "自分→AP", color: Ink.toAP, value: { $0.gwRTT }),
-                    Line(title: "インターネット", color: Ink.toNet, value: { $0.netRTT }),
+                    Line(title: "その先", color: Ink.toNet, value: { $0.netRTT }),
                    ], fmt: ms),
 
-            Series(title: "ゆらぎ（ms）",
-                   note: "会議の音声が途切れる主因",
-                   lo: 0, hi: jitHi,
-                   lines: [Line(title: "ゆらぎ", color: Ink.toAP, value: { $0.gwJitter })],
+            Series(title: "ゆらぎ ms", note: "会議の音が途切れる主因", lo: 0, hi: jitHi,
+                   lines: [Line(title: "自分→AP", color: Ink.toAP, value: { $0.gwJitter })],
                    fmt: ms),
 
-            Series(title: "とりこぼし（%）",
-                   note: "0%が正常",
-                   lo: 0, hi: lossHi,
+            Series(title: "とりこぼし %", note: "0が正常", lo: 0, hi: lossHi,
                    lines: [
                     Line(title: "自分→AP", color: Ink.toAP, value: { $0.gwLoss }),
-                    Line(title: "インターネット", color: Ink.toNet, value: { $0.netLoss }),
+                    Line(title: "その先", color: Ink.toNet, value: { $0.netLoss }),
                    ], fmt: ms),
 
-            Series(title: "電波の強さ（dBm）",
-                   note: "遅さの原因側の指標",
-                   lo: -90, hi: -30,
+            Series(title: "電波 dBm", note: "高いほど強い", lo: -90, hi: -30,
                    lines: [Line(title: "電波", color: Ink.value, value: { Double($0.rssi) })],
-                   fmt: ms),
-
-            Series(title: "リンク速度（Mbps）",
-                   note: "規格上の接続速度。実効スループットではない",
-                   lo: 0, hi: mbpsHi,
-                   lines: [Line(title: "リンク", color: Ink.value, value: { $0.txRate })],
                    fmt: ms),
         ]
     }
 
-    private let left: CGFloat = 62
-    private let right: CGFloat = 14
+    // 左に見出しを積むのをやめ、線を描く幅を稼ぐ。
+    // 見出しは各段の内側の左上に、地に溶ける濃さで置く。
+    private let left: CGFloat = 34
+    private let right: CGFloat = 12
     private let bandH: CGFloat = 12
-    private let axisH: CGFloat = 18
-    private let gapV: CGFloat = 10
+    private let axisH: CGFloat = 16
+    private let gapV: CGFloat = 14
+    /// 段の見出しが線と重ならないように空ける余白
+    private let headH: CGFloat = 13
     private let gapSeconds: TimeInterval = 150
 
     /// カーソルが指している観測点。ここを起点に全系列の断面を出す。
@@ -194,14 +187,18 @@ final class ChartView: NSView {
         y += bandH + gapV
 
         let sers = series
-        let panelH = max(24, (bounds.height - y - axisH - CGFloat(sers.count) * gapV) / CGFloat(sers.count))
+        // 1段ぶんの取り分。見出しと段間もこの中に含める。
+        // 足りないときは段の高さを削る。枠からはみ出させない。
+        let per = max(headH + 14, (bounds.height - y - axisH) / CGFloat(sers.count))
+        let lineH = max(14, per - headH - gapV)
         panels = []
         cachedSeries = sers
         for s in sers {
-            let r = NSRect(x: left, y: y, width: plotW, height: panelH)
+            let r = NSRect(x: left, y: y + headH, width: plotW, height: lineH)
+            guard r.maxY <= bounds.height - axisH else { break }   // 入らない段は描かない
             panels.append(r)
             drawSeries(s, in: r, X: X)
-            y += panelH + gapV
+            y += per
         }
 
         // AP切替の縦線。ラベルが重ならないよう最小間隔を空ける。
@@ -227,19 +224,30 @@ final class ChartView: NSView {
             }
         }
 
+        // 時刻の目盛り。端に寄せて潰すと重なって読めなくなるので、
+        // 前に置いた文字と重ならない位置にだけ描く。
         let tf = SampleLog.dayFormatter()
         tf.dateFormat = (t1 - t0) > 86_400 ? "M/d HH:mm" : "HH:mm"
+        var lastRight: CGFloat = -999
         for f in stride(from: 0.0, through: 1.0, by: 0.2) {
             let idx = min(samples.count - 1, Int(Double(samples.count - 1) * f))
-            let x = min(X(samples[idx]), left + plotW - 46)
-            label(tf.string(from: samples[idx].at),
-                  at: NSPoint(x: x, y: bounds.height - axisH + 2), size: 9, color: .tertiaryLabelColor)
+            let text = tf.string(from: samples[idx].at)
+            let w = NSAttributedString(string: text, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)]).size().width
+            var x = X(samples[idx])
+            if f >= 1.0 { x -= w }                      // 右端は内側へ寄せる
+            x = min(max(left, x), left + plotW - w)
+            guard x > lastRight + 8 else { continue }
+            label(text, at: NSPoint(x: x, y: bounds.height - axisH + 2), size: 9,
+                  color: .tertiaryLabelColor)
+            lastRight = x + w
         }
 
         if let hi = hoverIndex { drawCrosshair(index: hi, X: X) }
     }
 
     private func drawSeries(_ s: Series, in r: NSRect, X: (Sample) -> CGFloat) {
+        // 罫線は上下と中央の3本。段が低いときに増やしても読めない。
         NSColor.separatorColor.setStroke()
         for f in [0.0, 0.5, 1.0] {
             let yy = r.minY + r.height * CGFloat(f)
@@ -247,23 +255,9 @@ final class ChartView: NSView {
             p.move(to: NSPoint(x: r.minX, y: yy)); p.line(to: NSPoint(x: r.maxX, y: yy))
             p.lineWidth = 0.5; p.stroke()
         }
-        label(s.fmt(s.hi), at: NSPoint(x: 8, y: r.minY - 5), size: 9, color: .tertiaryLabelColor)
-        label(s.fmt(s.lo), at: NSPoint(x: 8, y: r.maxY - 9), size: 9, color: .tertiaryLabelColor)
-
-        // 見出し・注記・凡例を左端にまとめる
-        var ly = r.midY - 16
-        label(s.title, at: NSPoint(x: 8, y: ly), size: 9.5, color: .secondaryLabelColor, bold: true)
-        ly += 11
-        if let n = s.note {
-            label(n, at: NSPoint(x: 8, y: ly), size: 8, color: .tertiaryLabelColor)
-            ly += 10
-        }
-        if s.lines.count > 1 {
-            for ln in s.lines {
-                label("— " + ln.title, at: NSPoint(x: 8, y: ly), size: 8, color: ln.color)
-                ly += 10
-            }
-        }
+        // 縦軸の値は左の細い余白に。上下だけで足りる。
+        label(s.fmt(s.hi), at: NSPoint(x: 4, y: r.minY - 4), size: 8.5, color: .tertiaryLabelColor)
+        label(s.fmt(s.lo), at: NSPoint(x: 4, y: r.maxY - 9), size: 8.5, color: .tertiaryLabelColor)
 
         for ln in s.lines {
             let path = NSBezierPath()
@@ -280,6 +274,22 @@ final class ChartView: NSView {
             path.lineWidth = 1.3
             path.lineJoinStyle = .round
             path.stroke()
+        }
+
+        // 見出しは段の内側の左上に、線の上へ重ねて置く。
+        // 左に積むと、段の高さが足りないときに隣とぶつかる。
+        var x = r.minX + 2
+        x += label(s.title, at: NSPoint(x: x, y: r.minY - headH), size: 9.5,
+                   color: .secondaryLabelColor, bold: true) + 8
+        if s.lines.count > 1 {
+            for ln in s.lines {
+                x += label("— " + ln.title, at: NSPoint(x: x, y: r.minY - headH + 1),
+                           size: 8.5, color: ln.color) + 7
+            }
+        }
+        if let n = s.note, x + 90 < r.maxX {
+            label(n, at: NSPoint(x: x, y: r.minY - headH + 1), size: 8.5,
+                  color: .tertiaryLabelColor)
         }
     }
 
@@ -410,17 +420,16 @@ final class ChartView: NSView {
         return out
     }
 
+    @discardableResult
     private func label(_ t: String, at p: NSPoint, size: CGFloat,
-                       color: NSColor, bold: Bool = false) {
+                       color: NSColor, bold: Bool = false) -> CGFloat {
         // 左の余白に収まらない注記は切り詰める。draw(at:) のままだと
         // グラフの描画域へ100pt近くはみ出して、折れ線と文字が重なる。
         let a = NSAttributedString(string: t, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: bold ? .semibold : .regular),
             .foregroundColor: color])
-        let room = max(40, left - p.x - 4)
-        if a.size().width <= room { a.draw(at: p); return }
-        a.draw(with: NSRect(x: p.x, y: p.y, width: room, height: size * 1.6),
-               options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin])
+        a.draw(at: p)
+        return a.size().width
     }
 }
 
@@ -541,25 +550,27 @@ final class VerdictCard: NSView {
         // 大きな点数。色だけで良し悪しが分かるようにする。
         // 地の塗りと文字で濃さを分ける（白背景に明るい橙のままだと読めない）。
         let c = Palette.text(level)
-        let box = NSRect(x: 14, y: 14, width: 92, height: bounds.height - 28)
+        let box = NSRect(x: 14, y: 12, width: 96, height: bounds.height - 24)
         Palette.level(level).withAlphaComponent(0.12).setFill()
         NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
 
-        let n = score.map { "\($0)" } ?? "—"
-        let w = NSAttributedString(string: n, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 32, weight: .semibold)]).size().width
-        put(n, x: box.midX - w / 2, y: box.minY + 6, size: 32, weight: .semibold, color: c,
-            mono: true)
-        let word = "ふだん \(Palette.word(level))"
-        let ww = NSAttributedString(string: word, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width
-        put(word, x: box.midX - ww / 2, y: box.minY + 48, size: 11, weight: .medium, color: c)
-        if let bad, let score, bad < score - 2 {
-            let t = "悪いとき \(bad)点"
-            let tw = NSAttributedString(string: t, attributes: [
-                .font: NSFont.systemFont(ofSize: 10)]).size().width
-            put(t, x: box.midX - tw / 2, y: box.minY + 64, size: 10,
-                color: Palette.scoreColor(bad))
+        // 箱の中は中央に揃える。行数から逆算して置き、はみ出させない。
+        func centered(_ t: String, _ y: CGFloat, _ size: CGFloat,
+                      _ weight: NSFont.Weight, _ color: NSColor, mono: Bool = false) {
+            let f = mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+                         : NSFont.systemFont(ofSize: size, weight: weight)
+            let w = NSAttributedString(string: t, attributes: [.font: f]).size().width
+            put(t, x: box.midX - w / 2, y: y, size: size, weight: weight, color: color, mono: mono)
+        }
+
+        let hasBad = bad != nil && score != nil && (bad ?? 0) < (score ?? 0) - 2
+        var by = box.minY + (hasBad ? 6 : 14)
+        centered(score.map { "\($0)" } ?? "—", by, 30, .semibold, c, mono: true)
+        by += 35
+        centered("ふだん \(Palette.word(level))", by, 11, .medium, c)
+        if hasBad, let bad {
+            by += 15
+            centered("悪いとき \(bad)点", by, 10, .regular, Palette.scoreColor(bad))
         }
 
         var y: CGFloat = 14
@@ -1125,18 +1136,20 @@ final class HistoryWindowController: NSWindowController {
             // 子の幅をスタックに合わせた以上、横幅を押し広げるものが無くなる。
             // 下限を置かないと折り返しラベルが縦に伸びきって、窓ごと細長く潰れる。
             stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 820),
-            verdict.heightAnchor.constraint(equalToConstant: 92),
+            verdict.heightAnchor.constraint(equalToConstant: 104),
             hourStrip.heightAnchor.constraint(equalToConstant: 154),
             // スクロールの中身は、自分で clip view に留めないと位置も幅も決まらない。
             // 高さだけは行の積み上げに任せる（それがスクロール量になる）。
-            placeScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            // 詳細を開いたときは一覧を縮めて、窓が画面より高くならないようにする
+            placeScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
             placeStack.topAnchor.constraint(equalTo: placeScroll.contentView.topAnchor),
             placeStack.leadingAnchor.constraint(equalTo: placeScroll.contentView.leadingAnchor),
             placeStack.widthAnchor.constraint(equalTo: placeScroll.contentView.widthAnchor),
             // 直値の高さを required にすると、詳細を開いた瞬間に窓が
             // 画面より高くなって下が欠ける。譲れる形にして、狭い画面では縮める。
-            chart.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
-            textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            // 判定帯＋4段＋時刻軸。これを下回ると段が潰れて線の形が読めない。
+            chart.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
+            textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
         ])
         // 好みの高さを制約で書くと、優先度を下げても fittingSize に入ってしまい、
         // 詳細を開いた瞬間に窓が画面より高くなる（下が欠けて縮められない）。
