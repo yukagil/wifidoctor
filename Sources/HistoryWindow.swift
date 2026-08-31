@@ -512,89 +512,6 @@ extension NSView {
     }
 }
 
-// MARK: - 結論
-
-/// 画面のいちばん上。ここだけ読んで閉じても用が足りるように書く。
-///
-/// 数字を並べる前に、まず「今日はどうだったのか」を文で言い切る。
-/// 表やグラフは、その結論を確かめたい人のためのもの。
-final class VerdictCard: NSView {
-    private var score: Int?
-    private var bad: Int?
-    private var level: Level = .offline
-    private var lines: [String] = []
-    /// - Parameter caption: 箱の下に出す一語。既定は良し悪し（快適/ふつう/遅い）。
-    ///   場所をまたいだ日は、その数字がどこのものかを書く。
-    func set(score: Int?, bad: Int?, level: Level, caption: String? = nil, lines: [String]) {
-        self.score = score; self.bad = bad; self.level = level
-        self.caption = caption; self.lines = lines
-        needsDisplay = true
-    }
-    private var caption: String?
-    /// 動作確認から見る用。表と食い違っていないかを外から確かめられるようにしておく。
-    var shownScore: Int? { score }
-
-    // 手で描いた文字は、そのままでは読み上げの対象にならない。
-    // この画面の結論はここにしかないので、要素として名乗らせる。
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityLabel() -> String? {
-        (score.map { "総合 \(Palette.word(level)) \($0)点。" } ?? "") + lines.joined(separator: " ")
-    }
-
-    override var isFlipped: Bool { true }
-
-    override func draw(_ dirty: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.04).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10).fill()
-        NSColor.separatorColor.setStroke()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
-            .stroke()
-
-        // 大きな点数。色だけで良し悪しが分かるようにする。
-        // 地の塗りと文字で濃さを分ける（白背景に明るい橙のままだと読めない）。
-        let c = Palette.text(level)
-        let box = NSRect(x: 14, y: 12, width: 104, height: bounds.height - 24)
-        Palette.level(level).withAlphaComponent(0.12).setFill()
-        NSBezierPath(roundedRect: box, xRadius: 8, yRadius: 8).fill()
-
-        // 下の行と同じ形にする。「ふだん」「悪いとき」と言葉を足すほど、
-        // 何の数字なのかが遠くなる。数字の形（93 / 73）と、良し悪しの一語で足りる。
-        let hasBad = bad != nil && score != nil && (bad ?? 0) < (score ?? 0) - 2
-        let main = score.map { "\($0)" } ?? "—"
-        let sub = hasBad ? " / \(bad ?? 0)" : ""
-        let mainFont = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
-        let subFont = NSFont.monospacedDigitSystemFont(ofSize: 17, weight: .regular)
-        let mw = NSAttributedString(string: main, attributes: [.font: mainFont]).size().width
-        let sw = sub.isEmpty ? 0
-            : NSAttributedString(string: sub, attributes: [.font: subFont]).size().width
-        var bx = box.midX - (mw + sw) / 2
-        put(main, x: bx, y: box.minY + 12, size: 30, weight: .semibold, color: c, mono: true)
-        bx += mw
-        if !sub.isEmpty {
-            put(sub, x: bx, y: box.minY + 22, size: 17,
-                color: Palette.scoreColor(bad ?? 0), mono: true)
-        }
-        let word = caption ?? Palette.word(level)
-        let ww = min(box.width - 8, NSAttributedString(string: word, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width)
-        put(word, x: box.midX - ww / 2, y: box.minY + 50, size: 11, weight: .medium,
-            color: c, maxWidth: box.width - 8)
-
-        var y: CGFloat = 14
-        for (i, line) in lines.enumerated() {
-            let last = i == lines.count - 1 && lines.count > 2
-            _ = put(line, x: 120, y: y,
-                    size: i == 0 ? 15 : 12,
-                    weight: i == 0 ? .semibold : .regular,
-                    color: i == 0 ? .labelColor : .secondaryLabelColor,
-                    maxWidth: bounds.width - 134,
-                    lines: last ? 2 : 1)
-            y += i == 0 ? 26 : (last ? 36 : 19)
-        }
-    }
-}
-
 // MARK: - いつ
 
 /// 1日を時間ごとに見せ、その下に「そのときどこにつないでいたか」を並べる。
@@ -973,7 +890,6 @@ final class HistoryWindowController: NSWindowController {
     private let unitSeg = NSSegmentedControl(labels: ["APごと", "接続先ごと"],
                                              trackingMode: .selectOne, target: nil, action: nil)
     private let clearButton = NSButton()
-    private let verdict = VerdictCard()
     private let hourStrip = HourStripView()
     private let hoursTitle = NSTextField(labelWithString: "時間ごとの調子")
     private let hoursHint = NSTextField(labelWithString: "")
@@ -1126,7 +1042,7 @@ final class HistoryWindowController: NSWindowController {
         let toggleRow = NSStackView(views: [detailToggle, NSView()])
         toggleRow.orientation = .horizontal
 
-        let stack = NSStackView(views: [bar, verdict, hoursHead, hourStrip,
+        let stack = NSStackView(views: [bar, hoursHead, hourStrip,
                                         placesHead, placeScroll,
                                         toggleRow, detailBox])
         stack.orientation = .vertical
@@ -1144,7 +1060,6 @@ final class HistoryWindowController: NSWindowController {
             // 子の幅をスタックに合わせた以上、横幅を押し広げるものが無くなる。
             // 下限を置かないと折り返しラベルが縦に伸びきって、窓ごと細長く潰れる。
             stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 820),
-            verdict.heightAnchor.constraint(equalToConstant: 96),
             hourStrip.heightAnchor.constraint(equalToConstant: 154),
             // スクロールの中身は、自分で clip view に留めないと位置も幅も決まらない。
             // 高さだけは行の積み上げに任せる（それがスクロール量になる）。
@@ -1170,7 +1085,6 @@ final class HistoryWindowController: NSWindowController {
         for v in [bar, hoursHead, placesHead, toggleRow] as [NSView] {
             v.setContentHuggingPriority(.defaultHigh, for: .vertical)
         }
-        verdict.setContentHuggingPriority(.defaultHigh, for: .vertical)
         hourStrip.setContentHuggingPriority(.defaultHigh, for: .vertical)
         detailToggle.setContentHuggingPriority(.defaultHigh, for: .vertical)
     }
@@ -1228,9 +1142,8 @@ final class HistoryWindowController: NSWindowController {
         let days = ranges[max(0, rangePop.indexOfSelectedItem)].1
         loadGeneration += 1
         let generation = loadGeneration
-        if current.isEmpty {
-            verdict.set(score: nil, bad: nil, level: .offline, lines: ["記録を読み込んでいます…"])
-        }
+        // 読み込み中であることは、見出しの脇に出す
+        if current.isEmpty { hoursHint.stringValue = "記録を読み込んでいます…" }
         let log = self.log
         DispatchQueue.global(qos: .userInitiated).async {
             let cal = Calendar.current
@@ -1348,7 +1261,6 @@ final class HistoryWindowController: NSWindowController {
         hourStrip.selectedHour = selectedHour
 
         renderRows()
-        renderVerdict(c.focus.0, c.focus.1, days: days)
         detailSamples = c.focus.0
         if showsDetail { renderDetail() }
     }
@@ -1407,87 +1319,6 @@ final class HistoryWindowController: NSWindowController {
         if let h = selectedHour { t += " \(h)時台" }
         if let n = selectedKey.flatMap({ k in places.first { $0.key == k }?.name }) { t += " / \(n)" }
         return t
-    }
-
-    /// いちばん上の結論。数字を並べる前に、まず言い切る。
-    private func renderVerdict(_ s: [Sample], _ d: [TimeInterval], days: Int) {
-        guard !s.isEmpty else {
-            verdict.set(score: nil, bad: nil, level: .offline, lines: ["まだ記録がありません。"])
-            return
-        }
-        // つながっていなかった時間は「調子」ではないので、点数の集計から外す。
-        var scores: [(Double, TimeInterval)] = []
-        var connected: TimeInterval = 0
-        var badSeconds: TimeInterval = 0
-        var byVerdict: [Verdict: TimeInterval] = [:]
-        for (i, x) in s.enumerated() where x.associated && x.scoreVerdict != .offline {
-            scores.append((Double(x.score), d[i]))
-            connected += d[i]
-            let v = x.scoreVerdict ?? .ok
-            if v.isProblem { badSeconds += d[i]; byVerdict[v, default: 0] += d[i] }
-        }
-        guard connected > 0, let mid = PlaceReport.quantile(scores, 0.5) else {
-            verdict.set(score: nil, bad: nil, level: .offline,
-                        lines: ["この範囲には、つながっていた記録がありません。"])
-            return
-        }
-        let low = PlaceReport.quantile(scores, 0.10)
-
-        let where_ = [selectedHour.map { "\($0)時台" },
-                      selectedKey.flatMap { k in places.first { $0.key == k }?.name }]
-            .compactMap { $0 }.joined(separator: "・")
-        let head = where_.isEmpty
-            ? ranges[max(0, rangePop.indexOfSelectedItem)].0
-            : "\(ranges[max(0, rangePop.indexOfSelectedItem)].0)の \(where_)"
-
-        // 場所をまたいだ日の平均点には意味がない。
-        // 家のWi-Fiと会議室のAPを混ぜた数字は、どちらの話でもなくなる。
-        // 2か所以上つないだ日は、平均ではなく「どこが悪かったか」を出す。
-        let ranked = places.filter { $0.enough && $0.score.mid != nil }
-            .sorted { ($0.score.mid ?? 0) < ($1.score.mid ?? 0) }
-        let comparing = where_.isEmpty && ranked.count >= 2
-
-        var lines = ["\(head)は \(PlaceReport.spanWord(connected))つないで、"
-                     + (badSeconds < 30 ? "崩れた時間はありませんでした。"
-                        : "そのうち \(PlaceReport.spanWord(badSeconds)) は崩れていました。")]
-
-        if comparing, let worst = ranked.first, let best = ranked.last {
-            lines[0] = "\(head)は \(ranked.count)か所につないで、"
-                + "合わせて \(PlaceReport.spanWord(connected))"
-                + (badSeconds < 30 ? "。崩れた時間はありませんでした。"
-                   : "のうち \(PlaceReport.spanWord(badSeconds)) が崩れていました。")
-            lines.append("いちばん悪かったのは \(worst.name)"
-                + "（\(Int(worst.score.mid ?? 0))点・\(PlaceReport.spanWord(worst.seconds))）。"
-                + worst.detail + "。")
-            lines.append("いちばん良かったのは \(best.name)（\(Int(best.score.mid ?? 0))点）。")
-            verdict.set(score: Int(worst.score.mid ?? 0),
-                        bad: worst.score.bad.map { Int($0.rounded()) },
-                        level: worst.level, caption: worst.name, lines: lines)
-            return
-        }
-
-        let hours = HourReport.hours(s, by: grouping, durations: d)
-        if let w = HourReport.worst(hours, days: days) {
-            // 過半数を占めていない先を「そのときつないでいた」と名指しすると、
-            // 行き来していただけの場所を犯人にしてしまう。
-            let top = w.byKey.max { $0.value < $1.value }
-            let who = (top.map { $0.value > w.seconds * 0.5 } ?? false)
-                ? top.flatMap { pair in places.first { $0.key == pair.key }?.name } : nil
-            lines.append("いちばん悪かったのは \(w.hour)時台"
-                + (who.map { "の \($0)" } ?? "") + "（\(w.score)点）"
-                + (byVerdict.max(by: { $0.value < $1.value }).map {
-                    "、多くは「\($0.key.plainCause)」時間。" } ?? "。"))
-        } else if let top = byVerdict.max(by: { $0.value < $1.value }),
-                  top.value > connected * 0.1 {
-            lines.append("多くは「\(top.key.plainCause)」時間でした。")
-        } else {
-            lines.append("目立って悪い時間帯はありませんでした。")
-        }
-
-        verdict.set(score: Int(mid.rounded()), bad: low.map { Int($0.rounded()) },
-                    level: Palette.level(score: Int(mid.rounded()),
-                                         badRatio: badSeconds / connected),
-                    lines: lines)
     }
 
     @objc private func exportReport() {

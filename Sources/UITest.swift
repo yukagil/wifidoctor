@@ -423,18 +423,6 @@ enum UITest {
             expect(find(CompareRow.self, in: w.contentView).count == 2,
                    "絞り込んでも比較のため他の行は残す")
 
-            // 同じものを指す数字が、上の結論と下の行で食い違わないこと。
-            // 集計の仕方（件数の平均か、時間で重みを付けるか）がずれると起きる。
-            if let card = find(VerdictCard.self, in: w.contentView).first,
-               let picked = find(CompareRow.self, in: w.contentView).first(where: { $0.selected }) {
-                let rowScore = picked.place.score.mid.map { Int($0.rounded()) }
-                expect(card.shownScore == rowScore,
-                       "結論の点数と選んだ行の点数が一致する: "
-                       + "\(card.shownScore.map(String.init) ?? "—") / "
-                       + "\(rowScore.map(String.init) ?? "—")")
-            } else {
-                expect(false, "結論と選択中の行が見つからない")
-            }
 
             find(CompareRow.self, in: w.contentView).last?.onClick?()
             w.layoutIfNeeded()
@@ -472,8 +460,7 @@ enum UITest {
         }
 
         // 読み上げから見えること。手描きの view は放っておくと画面ごと空になる。
-        for v in find(VerdictCard.self, in: w.contentView) as [NSView]
-            + find(HourStripView.self, in: w.contentView)
+        for v in find(HourStripView.self, in: w.contentView) as [NSView]
             + find(CompareRow.self, in: w.contentView) {
             expect(v.isAccessibilityElement(), "読み上げの要素として名乗る: \(type(of: v))")
             expect(!(v.accessibilityLabel() ?? "").isEmpty,
