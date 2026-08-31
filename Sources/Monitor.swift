@@ -51,6 +51,10 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     private let loc = CLLocationManager()
 
     var onUpdate: (() -> Void)?
+    /// 1回の測定が終わった合図。メニューバーの絵を動かすのに使う。
+    /// onUpdate はリンク状態の更新でも呼ばれる（2〜4秒ごと）ので、
+    /// 「測った」ことだけを伝える口を分ける。
+    var onProbe: (() -> Void)?
     /// この状態が「利用者の操作で改善できるか」を外から判定してもらう。
     /// 切替候補の有無は既知ネットワーク一覧に依存するので Monitor 単独では決められない。
     var actionableCheck: ((Verdict) -> Bool)?
@@ -392,6 +396,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
                 self.notifier.observe(verdict: self.verdict, score: self.score,
                                       actionable: self.actionableCheck?(self.verdict) ?? false)
                 self.onUpdate?()
+                self.onProbe?()
             }
         }
     }

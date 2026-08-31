@@ -13,6 +13,8 @@ final class MenuController: NSObject, NSPopoverDelegate {
     private var refreshTimer: Timer?
     private var hosting: NSHostingController<RootView>?
     private var lastSymbol = ""
+    private var pingTimer: Timer?
+    private var pingStep = 0
 
     func start() {
         buildPopover()
@@ -30,6 +32,7 @@ final class MenuController: NSObject, NSPopoverDelegate {
             self.app.refresh()
             self.render()
         }
+        monitor.onProbe = { [weak self] in self?.playPing() }
         monitor.start()
         app.refreshKnownNetworks()
         app.refresh()
@@ -115,11 +118,8 @@ final class MenuController: NSObject, NSPopoverDelegate {
         // 2秒ごとに呼ばれるので、同じ絵柄なら作り直さない
         let sym = symbolName()
         if sym != lastSymbol {
-            let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-            let img = NSImage(systemSymbolName: sym, accessibilityDescription: "WiFiDoctor")?
-                .withSymbolConfiguration(cfg)
-            img?.isTemplate = true
-            b.image = img
+            if sym != "wifi" { stopPing() }
+            b.image = MenuController.glyph(sym, wave: 1)
             b.imagePosition = .imageLeading
             lastSymbol = sym
         }
@@ -134,6 +134,46 @@ final class MenuController: NSObject, NSPopoverDelegate {
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                          .foregroundColor: color])
         b.toolTip = app.hotKeyOn ? "\(app.snap.headline)\n⌥⌘W で今すぐ調べる" : app.snap.headline
+    }
+
+    /// メニューバーの絵。`wave` は電波の弧を外側までいくつ点灯させるか（0〜1）。
+    /// wifi 以外の記号は可変値に対応していないので、渡しても無視される。
+    static func glyph(_ name: String, wave: Double) -> NSImage? {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+        let img = NSImage(systemSymbolName: name, variableValue: wave,
+                          accessibilityDescription: "WiFiDoctor")
+        let out = img?.withSymbolConfiguration(cfg)
+        out?.isTemplate = true
+        return out
+    }
+
+    /// 測り終えるたびに、弧を内から外へ一度広げる。
+    /// 「生きていて、今も測っている」ことが、数字を読まなくても分かる。
+    static let pingFrames: [Double] = [0, 0.34, 0.67, 1]
+
+    private func playPing() {
+        // 調子が悪いときは wifi.exclamationmark を出している。
+        // 警告の絵を動かすと、遊びが警告を打ち消す。動かすのは元気なときだけ。
+        guard lastSymbol == "wifi" else { return }
+        // 「視差効果を減らす」を選んでいる人には動かさない
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        stopPing()
+        pingStep = 0
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self, let b = self.item.button else { return }
+            guard self.pingStep < MenuController.pingFrames.count else { self.stopPing(); return }
+            b.image = MenuController.glyph("wifi", wave: MenuController.pingFrames[self.pingStep])
+            self.pingStep += 1
+        }
+        pingTimer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+
+    /// 止めるときは必ず全点灯に戻す。途中で止めると、弧が欠けたまま固まる。
+    private func stopPing() {
+        pingTimer?.invalidate()
+        pingTimer = nil
+        if lastSymbol == "wifi" { item.button?.image = MenuController.glyph("wifi", wave: 1) }
     }
 
     // MARK: - 操作

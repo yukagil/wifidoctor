@@ -32,6 +32,7 @@ enum UITest {
         testDeniedLocationRendering()
         testLoadInsight()
         testScanCache()
+        testMenuBarGlyph()
 
         print("チェック \(checks) 件")
         if failures.isEmpty { print("すべて合格"); return 0 }
@@ -690,6 +691,38 @@ enum UITest {
     }
 
     // MARK: - スキャン結果の蓄積
+
+    /// メニューバーの絵。弧が段階的に点灯しないと、測定の合図が「点滅」にしか見えない。
+    private static func testMenuBarGlyph() {
+        for name in ["wifi", "wifi.exclamationmark", "wifi.slash"] {
+            expect(MenuController.glyph(name, wave: 1) != nil, "メニューバーの絵 \(name) が作れる")
+            expect(MenuController.glyph(name, wave: 1)?.isTemplate == true,
+                   "メニューバーの絵 \(name) はテンプレート（明暗どちらの地でも見える）")
+        }
+        let f = MenuController.pingFrames
+        expect(f.count >= 3, "波の段階が3つ以上ある")
+        expect(f.first == 0 && f.last == 1, "波は消灯から始まり全点灯で終わる")
+        expect(zip(f, f.dropFirst()).allSatisfy { $0 < $1 }, "波は外へ向かって増えるだけで戻らない")
+
+        // 段階ごとに実際に描き分けられているか。可変値が効かない環境だと
+        // すべて同じ絵になり、動きが「何も起きない」に落ちる。
+        func inked(_ v: Double) -> Int {
+            guard let img = MenuController.glyph("wifi", wave: v) else { return -1 }
+            let w = Int(img.size.width * 3), h = Int(img.size.height * 3)
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return -1 }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            img.draw(in: NSRect(x: 0, y: 0, width: w, height: h))
+            NSGraphicsContext.restoreGraphicsState()
+            var n = 0
+            for y in 0..<h { for x in 0..<w {
+                if let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.5 { n += 1 } } }
+            return n
+        }
+        expect(inked(0) < inked(1), "消灯のほうが全点灯より濃い画素が少ない")
+    }
 
     private static func testScanCache() {
         let sm = ScanManager()
