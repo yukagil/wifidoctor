@@ -51,7 +51,7 @@ final class Monitor: NSObject, CLLocationManagerDelegate {
     private let loc = CLLocationManager()
 
     var onUpdate: (() -> Void)?
-    /// 1回の測定が終わった合図。メニューバーの絵を動かすのに使う。
+    /// 1回の測定が終わった合図。メニューバーの猫を走らせるのに使う。
     /// onUpdate はリンク状態の更新でも呼ばれる（2〜4秒ごと）ので、
     /// 「測った」ことだけを伝える口を分ける。
     var onProbe: (() -> Void)?

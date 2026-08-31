@@ -12,9 +12,10 @@ final class MenuController: NSObject, NSPopoverDelegate {
     private var hotKey: HotKey?
     private var refreshTimer: Timer?
     private var hosting: NSHostingController<RootView>?
-    private var lastSymbol = ""
-    private var pingTimer: Timer?
-    private var pingStep = 0
+    private var catPose: CatPose = .walk
+    private var catFrame = 0
+    private var catTimer: Timer?
+    private var screenAsleep = false
 
     func start() {
         buildPopover()
@@ -25,6 +26,8 @@ final class MenuController: NSObject, NSPopoverDelegate {
         item.button?.action = #selector(togglePopover)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
+        observeScreenSleep()
+        monitor.onProbe = { [weak self] in self?.playBurst() }
         app.onCompactChange = { [weak self] in self?.render() }
         app.openHistory = { [weak self] in self?.showHistory() }
         monitor.onUpdate = { [weak self] in
@@ -32,7 +35,6 @@ final class MenuController: NSObject, NSPopoverDelegate {
             self.app.refresh()
             self.render()
         }
-        monitor.onProbe = { [weak self] in self?.playPing() }
         monitor.start()
         app.refreshKnownNetworks()
         app.refresh()
@@ -90,16 +92,63 @@ final class MenuController: NSObject, NSPopoverDelegate {
 
     // MARK: - メニューバー表示
 
-    private func symbolName() -> String {
-        guard monitor.link.associated else { return "wifi.slash" }
-        // 測定中は「切れている」ではない。起動直後に斜線を出すと、
-        // 隣にスコアが並んでいるのに切断中に見える。
-        if app.snap.measuring { return "wifi" }
-        switch app.snap.level {
-        case .good: return "wifi"
-        case .fair: return "wifi.exclamationmark"
-        case .bad:  return "wifi.exclamationmark"
-        case .offline: return "wifi.slash"
+    /// 猫。姿勢は調子を表し、測り終えるたびにひと駆けして止まる。
+    ///
+    /// ずっと動かし続けると、状態バーの描き直しだけで CPU を数%使う。
+    /// 「Macが忙しい」を見つけるための道具が、自分でMacを忙しくしては話にならない。
+    private func poseNow() -> CatPose {
+        CatPose.of(level: app.snap.level,
+                   associated: monitor.link.associated,
+                   measuring: app.snap.measuring)
+    }
+
+    /// 調子が変わったら、走っている途中でも姿勢を差し替える。
+    private func updatePose() {
+        let pose = poseNow()
+        guard pose != catPose || item.button?.image == nil else { return }
+        catPose = pose
+        catTimer?.invalidate(); catTimer = nil
+        item.button?.image = CatGlyph.still(pose)
+    }
+
+    /// 測り終えた合図でひと駆けさせる。
+    private func playBurst() {
+        let pose = poseNow()
+        if pose != catPose { updatePose() }
+        // 「視差効果を減らす」を選んでいる人には動かさない
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        // 画面が消えている間に動かしても誰も見ない。CPUを起こさない。
+        guard !screenAsleep else { return }
+        catTimer?.invalidate()
+        catFrame = 0
+        let t = Timer(timeInterval: 1.0 / pose.fps, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.catFrame >= pose.burst { self.stopBurst(); return }
+            self.item.button?.image = CatGlyph.image(self.catFrame, pose)
+            self.catFrame += 1
+        }
+        catTimer = t
+        RunLoop.main.add(t, forMode: .common)
+    }
+
+    /// 止めるときは必ず静止の駒に戻す。走りの途中で固まると脚が開いたままになる。
+    private func stopBurst() {
+        catTimer?.invalidate(); catTimer = nil
+        item.button?.image = CatGlyph.still(catPose)
+    }
+
+    /// 画面が消えている間は走らせない。
+    private func observeScreenSleep() {
+        let nc = NSWorkspace.shared.notificationCenter
+        nc.addObserver(forName: NSWorkspace.screensDidSleepNotification,
+                       object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.screenAsleep = true
+            self.stopBurst()
+        }
+        nc.addObserver(forName: NSWorkspace.screensDidWakeNotification,
+                       object: nil, queue: .main) { [weak self] _ in
+            self?.screenAsleep = false
         }
     }
 
@@ -115,14 +164,8 @@ final class MenuController: NSObject, NSPopoverDelegate {
             }
         }()
 
-        // 2秒ごとに呼ばれるので、同じ絵柄なら作り直さない
-        let sym = symbolName()
-        if sym != lastSymbol {
-            if sym != "wifi" { stopPing() }
-            b.image = MenuController.glyph(sym, wave: 1)
-            b.imagePosition = .imageLeading
-            lastSymbol = sym
-        }
+        b.imagePosition = .imageLeading
+        updatePose()
 
         // メニューバーが混むと溢れて消えるので、既定でも幅は数値2桁ぶんに抑える
         let compact = Settings.store.bool(forKey: "compactBar")
@@ -134,46 +177,6 @@ final class MenuController: NSObject, NSPopoverDelegate {
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                          .foregroundColor: color])
         b.toolTip = app.hotKeyOn ? "\(app.snap.headline)\n⌥⌘W で今すぐ調べる" : app.snap.headline
-    }
-
-    /// メニューバーの絵。`wave` は電波の弧を外側までいくつ点灯させるか（0〜1）。
-    /// wifi 以外の記号は可変値に対応していないので、渡しても無視される。
-    static func glyph(_ name: String, wave: Double) -> NSImage? {
-        let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-        let img = NSImage(systemSymbolName: name, variableValue: wave,
-                          accessibilityDescription: "WiFiDoctor")
-        let out = img?.withSymbolConfiguration(cfg)
-        out?.isTemplate = true
-        return out
-    }
-
-    /// 測り終えるたびに、弧を内から外へ一度広げる。
-    /// 「生きていて、今も測っている」ことが、数字を読まなくても分かる。
-    static let pingFrames: [Double] = [0, 0.34, 0.67, 1]
-
-    private func playPing() {
-        // 調子が悪いときは wifi.exclamationmark を出している。
-        // 警告の絵を動かすと、遊びが警告を打ち消す。動かすのは元気なときだけ。
-        guard lastSymbol == "wifi" else { return }
-        // 「視差効果を減らす」を選んでいる人には動かさない
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        stopPing()
-        pingStep = 0
-        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self, let b = self.item.button else { return }
-            guard self.pingStep < MenuController.pingFrames.count else { self.stopPing(); return }
-            b.image = MenuController.glyph("wifi", wave: MenuController.pingFrames[self.pingStep])
-            self.pingStep += 1
-        }
-        pingTimer = t
-        RunLoop.main.add(t, forMode: .common)
-    }
-
-    /// 止めるときは必ず全点灯に戻す。途中で止めると、弧が欠けたまま固まる。
-    private func stopPing() {
-        pingTimer?.invalidate()
-        pingTimer = nil
-        if lastSymbol == "wifi" { item.button?.image = MenuController.glyph("wifi", wave: 1) }
     }
 
     // MARK: - 操作

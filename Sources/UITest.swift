@@ -692,22 +692,9 @@ enum UITest {
 
     // MARK: - スキャン結果の蓄積
 
-    /// メニューバーの絵。弧が段階的に点灯しないと、測定の合図が「点滅」にしか見えない。
+    /// メニューバーの猫。駒が描き分けられていないと、動かしても止まって見える。
     private static func testMenuBarGlyph() {
-        for name in ["wifi", "wifi.exclamationmark", "wifi.slash"] {
-            expect(MenuController.glyph(name, wave: 1) != nil, "メニューバーの絵 \(name) が作れる")
-            expect(MenuController.glyph(name, wave: 1)?.isTemplate == true,
-                   "メニューバーの絵 \(name) はテンプレート（明暗どちらの地でも見える）")
-        }
-        let f = MenuController.pingFrames
-        expect(f.count >= 3, "波の段階が3つ以上ある")
-        expect(f.first == 0 && f.last == 1, "波は消灯から始まり全点灯で終わる")
-        expect(zip(f, f.dropFirst()).allSatisfy { $0 < $1 }, "波は外へ向かって増えるだけで戻らない")
-
-        // 段階ごとに実際に描き分けられているか。可変値が効かない環境だと
-        // すべて同じ絵になり、動きが「何も起きない」に落ちる。
-        func inked(_ v: Double) -> Int {
-            guard let img = MenuController.glyph("wifi", wave: v) else { return -1 }
+        func inked(_ img: NSImage) -> Int {
             let w = Int(img.size.width * 3), h = Int(img.size.height * 3)
             guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h,
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -721,7 +708,58 @@ enum UITest {
                 if let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.5 { n += 1 } } }
             return n
         }
-        expect(inked(0) < inked(1), "消灯のほうが全点灯より濃い画素が少ない")
+        // 姿勢ごとの見た目を、駒の中身（描かれた画素の数）で指紋にする
+        var fingerprints: [[Int]] = []
+        for pose in CatPose.allCases {
+            var f: [Int] = []
+            for i in 0..<CatGlyph.frameCount {
+                let img = CatGlyph.image(i, pose)
+                expect(img.isTemplate, "\(pose) はテンプレート（明暗どちらの帯でも見える）")
+                expect(img.size.height == CatGlyph.height, "\(pose) の高さが帯に収まる")
+                expect(img.size.width <= 24, "\(pose) の幅が広がりすぎない")
+                let n = inked(img)
+                expect(n > 60, "\(pose) の駒\(i) に絵がある")
+                f.append(n)
+            }
+            expect(Set(f).count >= 2, "\(pose) の4駒が全部同じではない（動いて見える）")
+            fingerprints.append(f)
+        }
+        // 姿勢どうしも取り違えられないこと
+        for (i, a) in fingerprints.enumerated() {
+            for (j, b) in fingerprints.enumerated() where j > i {
+                expect(a != b, "\(CatPose.allCases[i]) と \(CatPose.allCases[j]) が別の絵")
+            }
+        }
+
+        // 調子と姿勢の対応。ここが崩れると、悪いのに猫が走る。
+        expect(CatPose.of(level: .good, associated: true, measuring: false) == .run, "快調なら走る")
+        expect(CatPose.of(level: .fair, associated: true, measuring: false) == .walk, "ふつうなら歩く")
+        expect(CatPose.of(level: .bad, associated: true, measuring: false) == .sit, "悪いなら座る")
+        expect(CatPose.of(level: .offline, associated: true, measuring: false) == .sleep, "切断なら寝る")
+        expect(CatPose.of(level: .good, associated: false, measuring: false) == .sleep,
+               "つながっていなければ、点数が良くても寝る")
+        expect(CatPose.of(level: .bad, associated: true, measuring: true) == .walk,
+               "測定中は悪いと決めつけない")
+        // 元気なほど速い、が逆転していないこと
+        expect(CatPose.run.fps > CatPose.walk.fps && CatPose.walk.fps > CatPose.sit.fps
+               && CatPose.sit.fps > CatPose.sleep.fps, "元気なほど駒送りが速い")
+        expect(CatPose.run.fps <= 12, "駒送りが速すぎない")
+
+        // 静止の駒。走りの途中で固まると脚が開いたままになる。
+        for pose in CatPose.allCases {
+            let still = CatGlyph.still(pose)
+            expect(inked(still) > 60, "\(pose) の静止の駒に絵がある")
+            let moving = (0..<CatGlyph.frameCount).map { inked(CatGlyph.image($0, pose)) }
+            expect(moving.contains(where: { $0 != inked(still) }),
+                   "\(pose) の静止は動きの駒と同じではない")
+        }
+        // ひと駆けの長さ。ここが0だと動かず、長すぎると常時動かすのと変わらない。
+        for pose in CatPose.allCases {
+            expect(pose.burst >= 3, "\(pose) のひと駆けが短すぎない")
+            let sec = Double(pose.burst) / pose.fps
+            expect(sec <= 2.5, "\(pose) のひと駆けは2.5秒以内に止まる（測定の間隔より短い）")
+        }
+        expect(CatPose.run.burst > CatPose.sit.burst, "元気なほど長く動く")
     }
 
     private static func testScanCache() {
