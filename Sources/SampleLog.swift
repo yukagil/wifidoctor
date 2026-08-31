@@ -219,9 +219,13 @@ final class SampleLog {
     /// `alreadyFiltered` は「呼び出し側で representative 済み」の意味。
     /// 二重に掛けると、絞り込みで生まれた短い断片がさらに落ちて、
     /// 画面に出ている分数と添付レポートの分数が食い違う。
+    /// - Parameter includeHours: 場所ごとの「つないでいた時間帯」を入れるか。
+    ///   これは誰がどの部屋に何時にいたかの記録になり、ネットワークの切り分けには使わない。
+    ///   既定で外し、自分用に見たいときだけ入れる。
     func report(samples rawSamples: [Sample], title: String, usableAPs: Int = -1,
-                alreadyFiltered: Bool = false) -> String {
-        let tf = SampleLog.dayFormatter(); tf.dateFormat = "M/d HH:mm"
+                alreadyFiltered: Bool = false, includeHours: Bool = false) -> String {
+        // 秒まで出す。分単位だとコントローラのログと突き合わせられない。
+        let tf = SampleLog.dayFormatter(); tf.dateFormat = "M/d HH:mm:ss"
         guard !rawSamples.isEmpty else { return "\(title) の記録はありません。" }
         // スリープ中に飛び飛びで残った記録は集計から外す
         let samples = alreadyFiltered ? rawSamples : Sample.representative(rawSamples)
@@ -229,11 +233,14 @@ final class SampleLog {
         guard !samples.isEmpty else { return "\(title) の記録はありません。" }
 
         var out = "Wi-Fi 診断レポート  \(title)  [\(Build.version)]\n"
-        out += "観測 \(samples.count) 件\n"
+        out += "観測 \(samples.count) 件"
+        // AP側のログに引き当てるための鍵。これが無いと突き合わせが始まらない。
+        if let mac = LinkSampler.hardwareAddress { out += " / 端末のWi-Fi MAC \(mac)" }
+        out += " / \(TimeZone.current.identifier)\n"
         // 渡す本人が判断できるように、何が入っているかを先に書く。
         // 知らずに提出させるのが一番まずい。
         out += "※ このレポートには、接続していたWi-Fi名とAP（BSSID・呼び名）、"
-        out += "および分単位の時刻が含まれます。\n\n"
+        out += "端末のMACアドレス、および調子が悪かった時間帯の時刻が含まれます。\n\n"
         if dropped > 0 {
             out += "（スリープ中に飛び飛びで残った \(dropped) 件は集計から除外しています）\n"
         }
@@ -261,40 +268,58 @@ final class SampleLog {
                       samples.map { Double($0.score) }.min() ?? 0)
 
         // 悪化していた区間だけを塊にまとめて出す(全件出すと読めない)
+        // 判定は閾値の境目で振れる（例: 第一ホップが 12ms を挟んで往復すると
+        // 「APが混雑」と「AP以降が遅い」を数秒ごとに行き来する）。
+        // そのまま並べると細切れの数十行になり、受け取った人には読めない。
+        // 途切れが短いものは1つの区間として束ね、長かった判定でまとめて呼ぶ。
         out += "\n■ 調子が悪かった時間帯\n"
-        var runStart: Sample? = nil
-        var runWorst: Sample? = nil
-        var prev: Sample? = nil
-        var wrote = false
-        // 区間ごとに全件を filter すると、不調が細切れなほど遅くなる
-        // （＝調子の悪い環境ほど待たされる）。歩きながら最悪を持ち回る。
-        func flush(_ end: Sample) {
-            guard let st = runStart else { return }
-            let worst = runWorst ?? st
-            out += String(format: "  %@-%@  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms\n",
-                          tf.string(from: st.at), tf.string(from: end.at),
-                          (Verdict(rawValue: st.verdict)?.label ?? st.verdict),
-                          worst.score, worst.rssi, worst.channel, worst.txRate, worst.gwRTT ?? -1)
-            wrote = true
-            runStart = nil
-            runWorst = nil
-        }
-        for s in samples {
-            let bad = Verdict(rawValue: s.verdict)?.isProblem ?? false
-            if bad {
-                if runStart == nil { runStart = s; runWorst = s }
-                else if let p = prev, s.verdict != p.verdict { flush(p); runStart = s; runWorst = s }
-                if s.score < (runWorst?.score ?? Int.max) { runWorst = s }
-            } else if let p = prev, runStart != nil {
-                flush(p)
+
+        struct Span {
+            var from: Sample
+            var to: Sample
+            var worst: Sample
+            var seconds: TimeInterval = 0
+            var byVerdict: [String: TimeInterval] = [:]
+            /// いちばん長く続いた判定でこの区間を呼ぶ。
+            var label: String {
+                let v = byVerdict.max { $0.value < $1.value }?.key ?? from.verdict
+                return Verdict(rawValue: v)?.label ?? v
             }
-            prev = s
         }
-        if let p = prev { flush(p) }
-        if !wrote { out += "  なし\n" }
+        var spans: [Span] = []
+        let gapToMerge: TimeInterval = 60   // これ以内の小康は同じ不調として扱う
+
+        for (i, x) in samples.enumerated() {
+            guard Verdict(rawValue: x.verdict)?.isProblem ?? false else { continue }
+            let d = durations[i]
+            if var last = spans.last, x.at.timeIntervalSince(last.to.at) <= gapToMerge {
+                last.to = x
+                last.seconds += d
+                last.byVerdict[x.verdict, default: 0] += d
+                if x.score < last.worst.score { last.worst = x }
+                spans[spans.count - 1] = last
+            } else {
+                spans.append(Span(from: x, to: x, worst: x, seconds: d,
+                                  byVerdict: [x.verdict: d]))
+            }
+        }
+
+        // 数秒の揺れは行にしない。件数だけ添えて、読む側の目を長い方へ向ける。
+        let shown = spans.filter { $0.seconds >= 30 }
+        for sp in shown {
+            out += String(format: "  %@-%@（%@）  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms\n",
+                          tf.string(from: sp.from.at), tf.string(from: sp.to.at),
+                          PlaceReport.spanWord(sp.seconds), sp.label,
+                          sp.worst.score, sp.worst.rssi, sp.worst.channel,
+                          sp.worst.txRate, sp.worst.gwRTT ?? -1)
+        }
+        if shown.isEmpty { out += "  なし\n" }
+        let brief = spans.count - shown.count
+        if brief > 0 { out += "  （ほかに30秒未満の短い不調が \(brief) 回）\n" }
 
         // 場所別の実績。どの会議室が使えるかを比べるための本体。
-        out += placeSection(samples: samples, durations: durations)
+        out += placeSection(samples: samples, durations: durations,
+                            includeHours: includeHours)
 
         out += advice(byVerdict: byVerdict, total: Sample.totalSeconds(samples),
                       usableAPs: usableAPs)
@@ -304,7 +329,8 @@ final class SampleLog {
     /// 場所（AP）ごとの実績。呼び名を付けてあれば場所名で出る。
     /// 集計は画面の比較表と同じものを使う。別々に書くと、同じ記録から
     /// 別の点数が出て、どちらを信じればいいのか説明できなくなる。
-    private func placeSection(samples: [Sample], durations: [TimeInterval]) -> String {
+    private func placeSection(samples: [Sample], durations: [TimeInterval],
+                              includeHours: Bool) -> String {
         var out = "\n■ 場所別の実績\n"
         let places = PlaceReport.summaries(samples, by: .ap, durations: durations)
 
@@ -330,7 +356,9 @@ final class SampleLog {
             if p.badSeconds > 0 {
                 out += "    \(p.detail)\n"
             }
-            if !p.hourWord.isEmpty { out += "    つないでいた時間帯 \(p.hourWord)\n" }
+            if includeHours, !p.hourWord.isEmpty {
+                out += "    つないでいた時間帯 \(p.hourWord)\n"
+            }
         }
         if APNames.all().isEmpty {
             out += "  ※ アプリの［詳細］からAPに呼び名を付けると、ここに会議室名が出ます。\n"

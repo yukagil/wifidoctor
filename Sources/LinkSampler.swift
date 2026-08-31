@@ -25,6 +25,13 @@ struct LinkInfo {
 enum LinkSampler {
     static var interfaceName: String { CWWiFiClient.shared().interface()?.interfaceName ?? "en0" }
 
+    /// 自分のWi-Fi側のMACアドレス。
+    /// AP側のログと突き合わせるとき、これが無いと同じ端末だと特定できない。
+    /// macOS はネットワークごとにMACを変えることがあるので、そのままの値を出す。
+    static var hardwareAddress: String? {
+        CWWiFiClient.shared().interface()?.hardwareAddress()
+    }
+
     /// CoreWLAN が 0 を返したときのフォールバック値。system_profiler から拾う。
     /// ノイズフロアは秒単位では変化しないので、数十秒古い値でも判定には十分。
     ///

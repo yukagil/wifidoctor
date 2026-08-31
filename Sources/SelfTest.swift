@@ -1309,6 +1309,30 @@ enum SelfTest {
         expect(Settings.isTemporary, "テスト中は一時的な設定を使っている")
         expect(!(Settings.store is UserDefaults), "本物の UserDefaults を使っていない")
 
+        // 同じSSIDでも、下のバンドへは引き戻さない。
+        // 2.4GHz は届く距離が長いぶん常に強く見えるので、強さだけで選ぶと逆行する。
+        let sm = ScanManager()
+        var on5 = LinkInfo()
+        on5.associated = true; on5.ssid = "office"; on5.bssid = "aa:00:00:00:00:01"
+        on5.rssi = -65; on5.band = 5; on5.channel = 44
+        func seen(_ b: String, _ rssi: Int, band: Int, ch: Int) -> SeenAP {
+            SeenAP(ssid: "office", bssid: b, rssi: rssi, channel: ch, band: band,
+                   isCurrent: false, secure: true)
+        }
+        sm.merge([seen("bb:00:00:00:00:02", -50, band: 2, ch: 6)])
+        expect(sm.betterAP(than: on5) == nil,
+               "5GHzから2.4GHzへは、強くても乗り換えを勧めない")
+        sm.merge([seen("cc:00:00:00:00:03", -52, band: 5, ch: 149)])
+        expect(sm.betterAP(than: on5)?.ap.bssid == "cc:00:00:00:00:03",
+               "同じバンドで十分強ければ勧める")
+
+        // 2.4GHz にいるなら、上のバンドへは行ける（同じバンドのより強いAPも正当）
+        var on24 = on5
+        on24.band = 2; on24.channel = 6; on24.rssi = -70
+        let up = ScanManager()
+        up.merge([seen("dd:00:00:00:00:04", -55, band: 5, ch: 36)])
+        expect(up.betterAP(than: on24)?.ap.band == 5, "2.4GHzから5GHzへは勧める")
+
         // 暗号化なしのWi-Fiを、長所として推薦しないこと。
         // 名前を真似た偽のAPと本物は、この一覧では見分けが付かない。
         let openAP = SeenAP(ssid: "free-wifi", bssid: "ff:00:00:00:00:01", rssi: -40,

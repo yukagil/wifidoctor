@@ -116,7 +116,12 @@ final class ScanManager {
     func betterAP(than link: LinkInfo, marginDB: Int = 8) -> (ap: SeenAP, certain: Bool)? {
         guard !lastScan.isEmpty, link.associated else { return nil }
         if ssidVisible, let ssid = link.ssid {
-            let same = lastScan.filter { $0.ssid == ssid && $0.bssid != link.bssid }
+            // 電波の強さだけで選ぶと、同じSSIDの 2.4GHz は届く距離が長いぶん常に強く見え、
+            // 5GHz から 2.4GHz へ引き戻す助言になる（バンドステアリングと逆）。
+            // 同じバンドか、上のバンドへ行く場合だけを候補にする。
+            let same = lastScan.filter {
+                $0.ssid == ssid && $0.bssid != link.bssid && $0.band >= link.band
+            }
             if let best = same.first, best.rssi >= link.rssi + marginDB { return (best, true) }
             return nil
         }
