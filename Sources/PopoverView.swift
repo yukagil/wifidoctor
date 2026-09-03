@@ -330,7 +330,7 @@ struct HomeView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.tertiary)
                 .disabled(app.busy != nil)
-                .help(app.hotKeyOn ? "今すぐ測り直す（⌥⌘W）" : "今すぐ測り直す")
+                .help("今すぐ測り直す")
 
                 // 総合スコア。細かい指標を見なくても良し悪しの度合いが分かる。
                 VStack(spacing: 0) {
@@ -837,24 +837,21 @@ struct DetailView: View {
                 Divider().padding(.top, 10)
 
                 VStack(spacing: 7) {
-                    // 聞かれて答える場面が先に来るので、コピーを上に置く
-                    Button(action: { app.copyStatusForIT() }) {
-                        Label("いまの状況をコピー", systemImage: "doc.on.clipboard")
-                            .font(.system(size: 12))
-                            .frame(maxWidth: .infinity)
+                    // 渡すものは1つ（レポート）。貼るか、ファイルにするかだけの違い。
+                    HStack(spacing: 8) {
+                        Button(action: { app.copyReport() }) {
+                            Label("コピー", systemImage: "doc.on.clipboard")
+                                .font(.system(size: 12))
+                                .frame(maxWidth: .infinity)
+                        }
+                        Button(action: { app.exportReport() }) {
+                            Label("書き出す", systemImage: "square.and.arrow.up")
+                                .font(.system(size: 12))
+                                .frame(maxWidth: .infinity)
+                        }
                     }
-                    Text("情シスに「どういう状況？」と聞かれたら、これを貼れば伝わります")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Button(action: { app.exportReport() }) {
-                        Label("今日のレポートを書き出す", systemImage: "square.and.arrow.up")
-                            .font(.system(size: 12))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .padding(.top, 4)
-                    Text("腰を据えて調べてもらうときは、1日分のこちらを添える")
+                    Text("今日のレポート。情シスに「どういう状況？」と聞かれたら、"
+                         + "コピーしてそのまま貼れます")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -880,11 +877,6 @@ struct SettingsView: View {
                         .font(.system(size: 9))
                         .foregroundStyle(Level.fair.textTint)
                 }
-                Toggle("⌥⌘W で呼び出す", isOn: $app.hotKeyOn)
-                Text("入れると、他のアプリの ⌥⌘W（すべてのウインドウを閉じる）が効かなくなります")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 Toggle("メニューバーの表示を最小にする", isOn: $app.compactBar)
                 Text("メニューバーが混雑していてアイコンが隠れるときに使ってください")
                     .font(.system(size: 9))

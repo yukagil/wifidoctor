@@ -50,6 +50,7 @@ enum SelfTest {
         testRoamRecovery()
         testDateFormatIndependence()
         testITStatus()
+        testReportForIT()
 
         print("チェック \(checks) 件")
         if failures.isEmpty {
@@ -525,95 +526,97 @@ enum SelfTest {
                score: score, verdict: verdict.rawValue)
     }
 
-    /// 情シスに貼る「いまの状況」。
-    /// 聞かれて返すものなので、短さと、書いてある事実の正しさの両方が要る。
+    /// レポート冒頭の「いまの状態」。読み手は情シスなので、
+    /// 平易な言い換えではなく、素の値と、どのAPの話なのかが要る。
     private static func testITStatus() {
-        let now = Date(timeIntervalSince1970: 631_152_000 + 3600)
         func base() -> ITStatus.Input {
             var i = ITStatus.Input()
-            i.now = now
-            i.appVersion = "WiFiDoctor 1.0"
+            i.now = Date(timeIntervalSince1970: 631_152_000 + 3600)
             i.os = "macOS 26.2"; i.model = "Mac15,6"; i.mac = "80:a9:97:00:00:01"
             i.associated = true
             i.ssid = "OFFICE"; i.bssid = "aa:bb:cc:dd:ee:01"
             i.channel = 44; i.band = 5; i.width = 40
             i.rssi = -56; i.noise = -92; i.txRate = 400; i.phy = "11ax"
-            i.verdict = .ok; i.score = 88
-            i.gwRTT = 5; i.gwJitter = 1; i.gwLoss = 0; i.wanRTT = 20; i.dnsMS = 15
+            i.verdict = .congested; i.score = 62
+            i.gwIP = "192.168.0.1"
+            i.gwRTT = 18.2; i.gwJitter = 6.1; i.gwLoss = 0.4
+            i.wanRTT = 21; i.dnsMS = 15
             return i
         }
 
-        // 情シスが最初に引く鍵が必ず入っていること。どれが欠けても聞き返しになる。
-        let t = ITStatus.text(base())
-        for key in ["Mac15,6", "macOS 26.2", "80:a9:97:00:00:01", "OFFICE",
-                    "aa:bb:cc:dd:ee:01", "ch44", "-56dBm", "Asia/Tokyo"] {
-            expect(t.contains(key), "いまの状況に \(key) が入る")
+        // 情シスが最初に引く鍵。どれが欠けても聞き返しになる。
+        let h = ITStatus.head(base())
+        for key in ["OFFICE", "aa:bb:cc:dd:ee:01", "ch44", "-56dBm", "192.168.0.1",
+                    "RTT 18.2ms", "ジッタ 6.1ms", "ロス 0.4%", "DNS 15ms"] {
+            expect(h.contains(key), "いまの状態に \(key) が入る")
         }
-        expect(t.contains("WiFiDoctor 1.0"), "どのビルドが出した文面か分かる")
-        expect(t.contains("含まれるもの"), "何を渡すことになるかが本人に見えている")
+        eq(ITStatus.device(base()), "Mac15,6 / macOS 26.2 / Wi-Fi MAC 80:a9:97:00:00:01",
+           "端末の素性が1行にまとまる")
+        expect(h.contains("SNR 36dB"), "SNR まで出す（RSSI だけでは干渉と距離を分けられない）")
+        // 内部の符号を併記する。読み手がこのアプリを知らなくても突き合わせられる。
+        expect(h.contains("CONGESTED"), "判定を内部の符号でも書く")
 
-        // チャットに貼る前提。長すぎると読まれない。
-        var empty = base(); empty.recent = []
-        expect(ITStatus.text(empty).split(separator: "\n").count <= 20,
-               "記録が無いときの文面は20行以内")
-        expect(ITStatus.text(empty).contains("記録がありません"), "記録が無いことを隠さない")
+        // 言い換えを持ち込まない
+        for plain in ["ゆらぎ", "とりこぼし", "電波の強さ"] {
+            expect(!h.contains(plain), "情シス向けの文面に「\(plain)」を使わない")
+        }
 
-        // 未接続なら、電波の数値を並べても意味がない
         var off = base(); off.associated = false
-        expect(ITStatus.text(off).contains("接続していません"), "未接続をそう書く")
-        expect(!ITStatus.text(off).contains("ch44"), "未接続でチャンネルを書かない")
+        expect(ITStatus.head(off).contains("未接続"), "未接続をそう書く")
+        expect(!ITStatus.head(off).contains("ch44"), "未接続でチャンネルを書かない")
 
-        // 位置情報を断られていると、SSID/BSSID が読めない。
-        // 「不明」とだけ書くと、情シスは端末の異常だと受け取る。
-        var denied = base()
-        denied.locationDenied = true; denied.ssid = nil; denied.bssid = nil
-        expect(ITStatus.text(denied).contains("位置情報"), "名前が出ない理由を書く")
-        var nameless = base(); nameless.ssid = nil; nameless.bssid = nil
-        expect(ITStatus.text(nameless).contains("位置情報"),
-               "許可の状態が分からない経路でも、名前が出ない理由は書く")
-
-        // 直近1時間の外は「いま」ではない
-        var win = base()
-        win.recent = [sample(-600, score: 20, verdict: .congested),       // 1時間より前
-                      sample(-570, score: 20, verdict: .congested),
-                      sample(3500, score: 85, verdict: .ok)]
-        let wt = ITStatus.text(win)
-        expect(wt.contains("■ 直近60分"), "見ている範囲を明示する")
-        expect(!wt.contains("APが混雑  最悪20点"), "1時間より前の不調は「いま」に混ぜない")
-
-        // 不調区間は長い順に3件まで。全部並べるとチャットに貼れなくなる。
-        var many = base()
-        many.recent = (0..<12).flatMap { k -> [Sample] in
-            (0..<12).map { sample(3600 - 3500 + k * 280 + $0 * 5,
-                                  score: 30, verdict: .congested) }
-        }
-        let mt = ITStatus.text(many)
-        expect(mt.contains("ほかに30秒以上の不調が"), "並べきれない分は件数で示す")
-        expect(mt.split(separator: "\n").filter { $0.contains("最悪") }.count <= 3,
-               "不調の行は3件まで")
+        // 位置情報が無いと SSID/BSSID が読めない。
+        // 理由を書かないと、受け取った側は端末の異常だと読む。
+        var denied = base(); denied.ssid = nil; denied.bssid = nil
+        expect(ITStatus.head(denied).contains("位置情報"), "名前が出ない理由を書く")
 
         // SSID に改行を仕込まれても、行を偽造させない
         var evil = base()
-        evil.ssid = "OFFICE\n状態: 快適（100点）"
-        let et = ITStatus.text(evil)
-        expect(et.split(separator: "\n").filter { $0.hasPrefix("状態: ") }.count == 1,
+        evil.ssid = "OFFICE\n  判定 OK（快適）\n  第一ホップ  RTT 0.1ms"
+        expect(ITStatus.head(evil).split(separator: "\n").count
+                 == ITStatus.head(base()).split(separator: "\n").count,
                "SSIDに仕込まれた改行で行を増やせない")
 
-        // Mac側を疑わなくてよい、と根拠なく言わない
-        var busy = base(); busy.macWarn = true; busy.macLine = "CPUが混んでいます"
-        expect(!ITStatus.text(busy).contains("端末側の負荷は原因ではありません"),
-               "Mac側が重いときに「原因ではない」と書かない")
-        expect(ITStatus.text(base()).contains("端末側の負荷は原因ではありません"),
-               "Mac側が問題ないときは、そう書いて切り分けを1周省く")
+        // 端末側を疑わなくてよい、と根拠なく言わない
+        var busy = base(); busy.macWarn = true
+        expect(!ITStatus.head(busy).contains("判定に影響なし"),
+               "端末が重いときに「影響なし」と書かない")
+        expect(ITStatus.head(base()).contains("判定に影響なし"),
+               "端末が問題ないときは、そう書いて切り分けを1周省く")
 
-        // 申し送りはレポートと同じ判断から作る。別々に書くと言うことが食い違う。
-        var congested = base()
-        congested.recent = (0..<40).map { sample(3600 - 1200 + $0 * 30,
-                                                 score: 30, verdict: .congested) }
-        expect(ITStatus.text(congested).contains("確認をお願いしたいこと"),
-               "情シスに何を頼むかが書かれる")
-        expect(ITStatus.text(congested).contains("AP側のログ"),
-               "頼む内容がレポートと同じ言い方になる")
+        // レポートに畳み込まれること。渡すものが2種類あると、
+        // どちらを見せたのか分からなくなる。
+        let log = SampleLog()
+        let r = log.report(samples: [sample(0)], title: "今日", status: base())
+        expect(r.contains("■ いまの状態"), "レポートの冒頭に入る")
+        expect(r.contains("Mac15,6"), "レポートの見出しに端末が出る")
+        expect(!log.report(samples: [sample(0)], title: "今日").contains("■ いまの状態"),
+               "いまの状態が無いときは、その節ごと出さない")
+    }
+
+    /// レポートの読み手は情シス。値と、どのAPの話なのかが揃っていること。
+    private static func testReportForIT() {
+        let log = SampleLog()
+        // 設定はテスト用のメモリ上のものなので、実際の呼び名には触らない
+        APNames.set("会議室A", for: "aa:bb:cc:dd:ee:01")
+        defer { APNames.set("", for: "aa:bb:cc:dd:ee:01") }
+
+        var mixed = [sample(0, score: 95, verdict: .ok)]
+        mixed += (1...20).map { sample($0 * 5, score: 30, verdict: .congested) }
+        let r = log.report(samples: mixed, title: "今日")
+
+        // どのAPで起きたのかが無い時刻の羅列は、受け取った側で調べようがない
+        expect(r.contains("AP aa:bb:cc:dd:ee:01"), "不調の区間にAPが添えられる")
+        expect(r.contains("会議室A"), "呼び名を付けてあれば併記する")
+        // 素の指標名で書く
+        for key in ["GW RTT", "リンクレート", "RSSI", "CONGESTED"] {
+            expect(r.contains(key), "レポートに \(key) が出る")
+        }
+        for plain in ["ふだん ", "悪いとき ", "ゆらぎ ", "とりこぼし "] {
+            expect(!r.contains(plain), "レポートに「\(plain)」を使わない")
+        }
+        // 何の値なのかが分かるように、分位を明示する
+        expect(r.contains("p50"), "中央値であることを書く")
     }
 
     /// 追記→全件読み→差分読みが一致すること。差分読みは実装が壊れても
@@ -668,14 +671,16 @@ enum SelfTest {
         mixed += [sample(40, score: 92, verdict: .ok)]
         mixed += (0...2).map { sample(100 + $0 * 5, score: 10, verdict: .weak, bssid: nil) }
         let r = log.report(samples: mixed, title: "混在")
-        expect(r.contains("APが混雑"), "問題の種別が普段の言葉で出る")
-        expect(r.contains("調子が悪かった時間帯"), "区間の見出しが出る")
+        expect(r.contains("APが混雑"), "問題の種別が日本語でも出る")
+        expect(r.contains("不調区間"), "区間の見出しが出る")
         expect(!r.contains("nan") && !r.contains("inf"), "数値が壊れていない")
 
-        // 内部の名前（OK / CONGESTED など）を人が読む文書に出さないこと
-        for v in Verdict.allCases {
-            expect(!r.contains(v.rawValue),
-                   "レポートに内部名が出ている: \(v.rawValue)")
+        // 内部の符号（OK / CONGESTED など）は、必ず日本語と併記で出すこと。
+        // 符号だけだとこのアプリを知らない人に伝わらず、
+        // 日本語だけだと他の資料と突き合わせられない。
+        for v in Verdict.allCases where r.contains(v.rawValue) {
+            expect(r.contains("\(v.rawValue)（\(v.label)）"),
+                   "レポートの \(v.rawValue) に日本語が併記されていない")
         }
 
         // BSSIDが1件も無い記録でも落ちない
@@ -1167,7 +1172,7 @@ enum SelfTest {
             return x
         }
         let r = SampleLog().report(samples: ss, title: "場所別", usableAPs: 1)
-        expect(r.contains("場所別の実績"), "場所別の見出しが出る")
+        expect(r.contains("AP別の実績"), "AP別の見出しが出る")
         expect(r.contains("13F 執務室"), "呼び名が場所別に出る")
         APNames.set("", for: bssid)
     }
@@ -1405,8 +1410,8 @@ enum SelfTest {
         // 家のWi-Fiと会議室のAPを混ぜた点数は、どちらの話でもなくなる。
         var oneAP: [Sample] = []
         for i in 0..<120 { oneAP.append(sample(i * 5, score: 90, bssid: "aa:bb:cc:00:00:01")) }
-        expect(SampleLog().report(samples: oneAP, title: "1か所").contains("ふだん"),
-               "1か所なら全体の点数を出す")
+        expect(SampleLog().report(samples: oneAP, title: "1か所").contains("■ スコア  p50"),
+               "1か所なら全体のスコアを出す")
 
         var twoAP = oneAP
         for i in 0..<120 {
@@ -1416,7 +1421,7 @@ enum SelfTest {
         let mixed = SampleLog().report(samples: twoAP, title: "2か所")
         expect(mixed.contains("2か所につないでいるため"), "混ざっていれば平均を出さない")
         expect(!mixed.contains("■ 点数  ふだん"), "混ざった平均を書かない")
-        expect(mixed.contains("場所別の実績"), "代わりに場所ごとを見せる")
+        expect(mixed.contains("AP別の実績"), "代わりにAPごとを見せる")
 
         // しきい値をサイトに合わせて動かせること。
         // 集中トンネル型では第一ホップがAPではないので、12ms固定だと常に混雑になる。

@@ -26,14 +26,6 @@ final class AppState: ObservableObject {
             Settings.store.set(notifyOn, forKey: "notifyOn")
         }
     }
-    /// ⌥⌘W で呼び出すかどうか。既定は切。全アプリの標準ショートカットを奪うため。
-    @Published var hotKeyOn: Bool {
-        didSet {
-            Settings.store.set(hotKeyOn, forKey: "hotKeyOn")
-            onHotKeyChange?()
-        }
-    }
-    var onHotKeyChange: (() -> Void)?
     @Published var compactBar: Bool {
         didSet {
             Settings.store.set(compactBar, forKey: "compactBar")
@@ -110,7 +102,6 @@ final class AppState: ObservableObject {
         }
         // 既定は入り。ただし一度切ったら覚える（切ったつもりが再起動で戻るのを防ぐ）
         self.notifyOn = Settings.store.object(forKey: "notifyOn") as? Bool ?? true
-        self.hotKeyOn = Settings.store.bool(forKey: "hotKeyOn")
         self.compactBar = Settings.store.bool(forKey: "compactBar")
         self.loginOn = LoginItem.isEnabled
         self.loginStatus = LoginItem.statusText
@@ -672,23 +663,30 @@ final class AppState: ObservableObject {
         self.flash = flash
     }
 
-    /// 情シスに「いまどうなってるの？」と聞かれたときの返信を作って、貼り付け板に置く。
+    /// 今日のレポートを貼り付け板に置く。
     ///
-    /// ファイルに書き出すレポートとは別に用意している。チャットで聞かれた質問に、
-    /// ファイルを添付して返させるのは重い。聞かれたことに、その場で返せる長さのものが要る。
-    func copyStatusForIT() {
-        let text = ITStatus.text(statusInput())
+    /// 情シスに聞かれる場面はチャットなので、ファイルを添付させるのは重い。
+    /// 渡すものはファイルと同じレポート本文にする。中身が2種類あると、
+    /// どちらを見せたのかが分からなくなる。
+    func copyReport() {
+        let body = todayReport()
         // 置き換える前に中身を捨てないと、古い型の内容が残って別のアプリで化ける
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        flash = "いまの状況をコピーしました。情シスへの返信にそのまま貼れます"
+        NSPasteboard.general.setString(body, forType: .string)
+        flash = "今日のレポートをコピーしました。情シスへの返信にそのまま貼れます"
     }
 
-    /// 生きた計測から、文面を組むのに必要な値だけを取り出す。
+    private func todayReport() -> String {
+        monitor.log.report(samples: monitor.log.load(date: Date()),
+                           title: "今日",   // 他の日は履歴ウィンドウの期間から
+                           usableAPs: monitor.scanner.usablePhysicalAPs(),
+                           status: statusInput())
+    }
+
+    /// 生きた計測から、レポート冒頭の「いまの状態」に要る値だけを取り出す。
     func statusInput(now: Date = Date()) -> ITStatus.Input {
         var i = ITStatus.Input()
         i.now = now
-        i.appVersion = Build.version
         i.os = Host.os
         i.model = Host.model
         i.mac = LinkSampler.hardwareAddress
@@ -704,43 +702,29 @@ final class AppState: ObservableObject {
 
         i.verdict = monitor.verdict
         i.score = monitor.score
+        i.gwIP = monitor.gatewayIP
         i.gwRTT = monitor.gw?.avg
         i.gwJitter = monitor.gw?.stddev
         i.gwLoss = monitor.gw?.loss
         i.wanRTT = monitor.wan?.avg
+        i.wanLoss = monitor.wan?.loss
         i.dnsMS = monitor.dnsMS
 
         i.vpn = monitor.vpnInterface
         i.cpuPercent = monitor.load.cpuPercent
         i.ownMbps = monitor.ownMbps
-        i.macLine = snap.macLine
         i.macWarn = snap.macWarn
         i.usableAPs = snap.usableAPs
         i.coChannel = monitor.scanner.coChannelCount(l)
         i.locationDenied = snap.locationDenied
-        i.recent = recentAcrossMidnight(now: now)
         return i
-    }
-
-    /// 直近1時間だけが要る。0時をまたいだ直後は、今日のファイルにまだ数分しか無い。
-    /// 前日のぶんを足さないと「記録がありません」と返してしまう。
-    private func recentAcrossMidnight(now: Date) -> [Sample] {
-        let from = now.addingTimeInterval(-ITStatus.window)
-        var samples = recent.isEmpty ? monitor.log.load(date: now) : recent
-        if from < Calendar.current.startOfDay(for: now) {
-            let yesterday = now.addingTimeInterval(-86400)
-            samples = monitor.log.load(date: yesterday).filter { $0.at >= from } + samples
-        }
-        return samples
     }
 
     func exportReport() {
         let p = NSSavePanel()
         let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
-        let body = monitor.log.report(samples: monitor.log.load(date: Date()),
-                                      title: "今日",   // 他の日は履歴ウィンドウの期間から
-                                      usableAPs: monitor.scanner.usablePhysicalAPs())
+        let body = todayReport()
         NSApp.activate(ignoringOtherApps: true)
         p.begin { r in
             guard r == .OK, let url = p.url else { return }

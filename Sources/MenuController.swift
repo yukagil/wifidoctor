@@ -9,7 +9,6 @@ final class MenuController: NSObject, NSPopoverDelegate {
     private lazy var app = AppState(monitor: monitor)
     private let popover = NSPopover()
     private var history: HistoryWindowController?
-    private var hotKey: HotKey?
     private var refreshTimer: Timer?
     private var hosting: NSHostingController<RootView>?
     private var catPose: CatPose = .walk
@@ -47,12 +46,6 @@ final class MenuController: NSObject, NSPopoverDelegate {
         }
         RunLoop.main.add(refreshTimer!, forMode: .common)
 
-        // ⌥⌘W は macOS 標準の「すべてのウインドウを閉じる」。
-        // RegisterEventHotKey はシステム全域なので、既定で登録すると
-        // 入れた瞬間から全アプリでその操作が効かなくなる。
-        // 使う人はWi-Fiアプリのせいだと気づけないので、明示的に有効にしたときだけ登録する。
-        applyHotKey()
-        app.onHotKeyChange = { [weak self] in self?.applyHotKey() }
         monitor.notifier.enabled = app.notifyOn
 
         // 自動起動の指定があれば、ユーザー操作を待たずに登録する
@@ -176,7 +169,7 @@ final class MenuController: NSObject, NSPopoverDelegate {
                 : (monitor.link.associated && !app.snap.measuring ? " \(monitor.score)" : " --"),
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                          .foregroundColor: color])
-        b.toolTip = app.hotKeyOn ? "\(app.snap.headline)\n⌥⌘W で今すぐ調べる" : app.snap.headline
+        b.toolTip = app.snap.headline
     }
 
     // MARK: - 操作
@@ -210,12 +203,6 @@ final class MenuController: NSObject, NSPopoverDelegate {
         app.clearFlash()
     }
 
-    /// ホットキー: 開くと同時に測り直す。「遅い」と感じた瞬間の状態をその場で出す。
-    private func hotKeyFired() {
-        showPopover()
-        app.quickScan()
-    }
-
     /// 初回だけ、何をするアプリなのかを伝える。
     /// 常時測ることと、記録がディスクに残ることは、黙って始めてよいことではない
     /// （README を読まない人にも届かせる）。
@@ -238,18 +225,12 @@ final class MenuController: NSObject, NSPopoverDelegate {
         showPopover()
     }
 
-    /// 設定に従ってホットキーを登録・解除する。
-    func applyHotKey() {
-        hotKey = nil
-        guard app.hotKeyOn else { return }
-        hotKey = HotKey(keyCode: UInt32(kVK_ANSI_W),
-                        modifiers: UInt32(cmdKey | optionKey)) { [weak self] in
-            self?.hotKeyFired()
-        }
-    }
-
     private func showHistory() {
-        if history == nil { history = HistoryWindowController(log: monitor.log) }
+        if history == nil {
+            history = HistoryWindowController(log: monitor.log)
+            // どの端末がどのAPにつないでいる話なのかを、書き出すレポートにも入れる
+            history?.statusInput = { [weak self] in self?.app.statusInput() ?? ITStatus.Input() }
+        }
         NSApp.activate(ignoringOtherApps: true)
         history?.showWindow(nil)
         history?.reload()

@@ -222,8 +222,11 @@ final class SampleLog {
     /// - Parameter includeHours: 場所ごとの「つないでいた時間帯」を入れるか。
     ///   これは誰がどの部屋に何時にいたかの記録になり、ネットワークの切り分けには使わない。
     ///   既定で外し、自分用に見たいときだけ入れる。
+    /// - Parameter status: 渡すと「いまの状態」を先頭に入れる。
+    ///   どの端末がどのAPにつないでいる話なのかが無いレポートは、受け取っても動けない。
     func report(samples rawSamples: [Sample], title: String, usableAPs: Int = -1,
-                alreadyFiltered: Bool = false, includeHours: Bool = false) -> String {
+                alreadyFiltered: Bool = false, includeHours: Bool = false,
+                status: ITStatus.Input? = nil) -> String {
         // 秒まで出す。分単位だとコントローラのログと突き合わせられない。
         let tf = SampleLog.dayFormatter(); tf.dateFormat = "M/d HH:mm:ss"
         guard !rawSamples.isEmpty else { return "\(title) の記録はありません。" }
@@ -233,14 +236,16 @@ final class SampleLog {
         guard !samples.isEmpty else { return "\(title) の記録はありません。" }
 
         var out = "Wi-Fi 診断レポート  \(title)  [\(Build.version)]\n"
-        out += "観測 \(samples.count) 件"
         // AP側のログに引き当てるための鍵。これが無いと突き合わせが始まらない。
-        if let mac = LinkSampler.hardwareAddress { out += " / 端末のWi-Fi MAC \(mac)" }
-        out += " / \(TimeZone.current.identifier)\n"
+        let device = status.map { ITStatus.device($0) }
+            ?? LinkSampler.hardwareAddress.map { "Wi-Fi MAC \($0)" } ?? ""
+        if !device.isEmpty { out += "端末: \(device)\n" }
+        out += "観測 \(samples.count) 件 / \(TimeZone.current.identifier)\n"
         // 渡す本人が判断できるように、何が入っているかを先に書く。
         // 知らずに提出させるのが一番まずい。
         out += "※ このレポートには、接続していたWi-Fi名とAP（BSSID・呼び名）、"
-        out += "端末のMACアドレス、および調子が悪かった時間帯の時刻が含まれます。\n\n"
+        out += "端末のMACアドレス、および不調があった時刻が含まれます。\n\n"
+        if let status { out += ITStatus.head(status) }
         if dropped > 0 {
             out += "（スリープ中に飛び飛びで残った \(dropped) 件は集計から除外しています）\n"
         }
@@ -250,13 +255,13 @@ final class SampleLog {
         let durations = Sample.durations(samples)
         var byVerdict: [String: TimeInterval] = [:]
         for (i, s) in samples.enumerated() { byVerdict[s.verdict, default: 0] += durations[i] }
-        out += "■ どんな状態だったか\n"
+        out += "■ 判定ごとの時間\n"
         for v in Verdict.allCases {
             guard let sec = byVerdict[v.rawValue], sec > 0 else { continue }
             let mins = Int((sec / 60).rounded())
-            // 内部の名前をそのまま出さない。読む人には意味がない。
-            let pad = v.label.padding(toLength: 22, withPad: " ", startingAt: 0)
-            out += "  \(pad)\(String(format: "%4d", mins))分\n"
+            // 読み手は情シスなので、内部の符号も併記して他の資料と突き合わせられるようにする
+            let name = "\(v.rawValue)（\(v.label)）"
+            out += "  \(SampleLog.pad(name, 36))\(String(format: "%4d", mins))分\n"
         }
 
         // 場所をまたいだ平均には意味がない。家のWi-Fiと会議室のAPを混ぜた数字は、
@@ -264,13 +269,13 @@ final class SampleLog {
         let scorePairs = zip(samples, durations).map { (Double($0.0.score), $0.1) }
         let placeCount = Set(samples.compactMap { $0.bssid }).count
         if placeCount <= 1 {
-            out += String(format: "\n■ 点数  ふだん %.0f点 / 悪いとき %.0f点 / 最低 %.0f点\n",
+            out += String(format: "\n■ スコア  p50 %.0f / p10 %.0f / 最低 %.0f\n",
                           PlaceReport.quantile(scorePairs, 0.5) ?? 0,
                           PlaceReport.quantile(scorePairs, 0.10) ?? 0,
                           samples.map { Double($0.score) }.min() ?? 0)
         } else {
-            out += "\n■ 点数  \(placeCount)か所につないでいるため、全体の平均は出しません"
-            out += "（下の場所別を見てください）\n"
+            out += "\n■ スコア  \(placeCount)か所につないでいるため、全体の平均は出しません"
+            out += "（下のAP別を見てください）\n"
         }
 
         // 悪化していた区間だけを塊にまとめて出す(全件出すと読めない)
@@ -278,7 +283,7 @@ final class SampleLog {
         // 「APが混雑」と「AP以降が遅い」を数秒ごとに行き来する）。
         // そのまま並べると細切れの数十行になり、受け取った人には読めない。
         // 途切れが短いものは1つの区間として束ね、長かった判定でまとめて呼ぶ。
-        out += "\n■ 調子が悪かった時間帯\n"
+        out += "\n■ 不調区間（30秒以上）\n"
 
         let spans = SampleLog.problemSpans(samples, durations)
 
@@ -303,7 +308,7 @@ final class SampleLog {
     /// 別の点数が出て、どちらを信じればいいのか説明できなくなる。
     private func placeSection(samples: [Sample], durations: [TimeInterval],
                               includeHours: Bool) -> String {
-        var out = "\n■ 場所別の実績\n"
+        var out = "\n■ AP別の実績\n"
         let places = PlaceReport.summaries(samples, by: .ap, durations: durations)
 
         guard !places.isEmpty else {
@@ -315,13 +320,13 @@ final class SampleLog {
         for p in places {
             out += "  \(p.name)\n"
             guard p.enough else {
-                out += "    \(Int(p.seconds))秒だけ（判定できるほどの記録がありません） / \(p.key)\n"
+                out += "    \(p.key) / 接続 \(Int(p.seconds))秒（判定に足る記録がありません）\n"
                 continue
             }
-            out += String(format: "    ふだん %d点 / 悪いとき %d点 / %d分 / 電波 %ddBm / %@\n",
-                          Int(p.score.mid ?? 0), Int(p.score.bad ?? 0),
-                          p.minutes, p.rssi ?? 0, p.key)
-            out += String(format: "    応答 %d→%dms / ゆらぎ %d→%dms / とりこぼし %.1f%%\n",
+            out += String(format: "    %@ / 接続 %d分 / スコア p50 %d, p10 %d / RSSI 中央 %ddBm\n",
+                          p.key, p.minutes,
+                          Int(p.score.mid ?? 0), Int(p.score.bad ?? 0), p.rssi ?? 0)
+            out += String(format: "    GW RTT p50 %dms, p95 %dms / ジッタ p50 %dms, p95 %dms / ロス %.1f%%\n",
                           Int(p.rtt.mid ?? 0), Int(p.rtt.bad ?? 0),
                           Int(p.jitter.mid ?? 0), Int(p.jitter.bad ?? 0),
                           (p.lossRatio ?? 0) * 100)
@@ -336,6 +341,17 @@ final class SampleLog {
             out += "  ※ アプリの［詳細］からAPに呼び名を付けると、ここに会議室名が出ます。\n"
         }
         return out
+    }
+
+    /// 等幅で読む前提の桁揃え。全角は2桁ぶんとして数える。
+    /// 文字数で揃えると、日本語が混ざった瞬間に列がばらける。
+    static func pad(_ s: String, _ width: Int) -> String {
+        var w = 0
+        for u in s.unicodeScalars {
+            // 記号・かな・漢字・全角括弧はどれも2桁ぶんの幅で表示される
+            w += (u.value >= 0x1100 && u.value <= 0x1FFFF) ? 2 : 1
+        }
+        return s + String(repeating: " ", count: max(1, width - w))
     }
 
     /// ひとつながりの不調。
@@ -353,14 +369,31 @@ final class SampleLog {
         /// いちばん長く続いた判定でこの区間を呼ぶ。
         var label: String {
             let v = byVerdict.max { $0.value < $1.value }?.key ?? from.verdict
-            return Verdict(rawValue: v)?.label ?? v
+            guard let known = Verdict(rawValue: v) else { return v }
+            return "\(known.rawValue)（\(known.label)）"
         }
-        /// 1行で書いたもの。レポートと「いまの状況」で同じ書き方にする。
+        /// この区間で掴んでいたAP。途中で変わっていれば、そのことも書く。
+        /// どのAPの話か分からない時刻の羅列は、受け取った側で調べようがない。
+        var apWord: String {
+            guard let b = worst.bssid else { return "BSSID不明" }
+            var t = b
+            if let n = APNames.name(for: b) { t += "（\(n.safeForText)）" }
+            if from.bssid != to.bssid { t += " ほか" }
+            return t
+        }
+
+        /// 1行で書いたもの。
         func line(_ tf: DateFormatter) -> String {
-            String(format: "%@-%@（%@）  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms",
-                   tf.string(from: from.at), tf.string(from: to.at),
-                   PlaceReport.spanWord(seconds), label,
-                   worst.score, worst.rssi, worst.channel, worst.txRate, worst.gwRTT ?? -1)
+            var t = String(format: "%@-%@（%@）  %@  最悪スコア%d",
+                           tf.string(from: from.at), tf.string(from: to.at),
+                           PlaceReport.spanWord(seconds), label, worst.score)
+            t += "\n      AP \(apWord)"
+            t += String(format: " / ch%d / RSSI %ddBm / リンクレート %.0fMbps / GW RTT %@",
+                        worst.channel, worst.rssi, worst.txRate,
+                        worst.gwRTT.map { String(format: "%.1fms", $0) } ?? "応答なし")
+            if let j = worst.gwJitter { t += String(format: " / ジッタ %.1fms", j) }
+            if let l = worst.gwLoss, l > 0 { t += String(format: " / ロス %.1f%%", l) }
+            return t
         }
     }
 
@@ -387,7 +420,7 @@ final class SampleLog {
 
     /// 情シスに渡したときに「で、何をすればいいのか」が分かるようにする。
     /// クライアント側で直せない問題は、AP側の設定で直せることが多い。
-    static func advice(byVerdict: [String: TimeInterval], total: TimeInterval,
+    private static func advice(byVerdict: [String: TimeInterval], total: TimeInterval,
                         usableAPs: Int = -1) -> String {
         guard total > 0 else { return "" }
         func ratio(_ v: Verdict) -> Double { (byVerdict[v.rawValue] ?? 0) / total }
@@ -396,7 +429,7 @@ final class SampleLog {
 
         if ratio(.sticky) > 0.05 {
             items.append("""
-              ・遠いAPを掴んだままになる時間が長い（観測時間の\(Int(ratio(.sticky) * 100))%）
+              ・遠いAPを掴んだままになる時間が長い（STICKY）（観測時間の\(Int(ratio(.sticky) * 100))%）
                 macOSは自力ではなかなか掴み直しません。AP側で対処できます:
                   - 最小RSSI（クライアントを一定以下の電波で切り離す設定）の導入
                   - 802.11k / 802.11v の有効化（APから端末へ移動を促せる）
@@ -409,7 +442,7 @@ final class SampleLog {
             // 端末の省電力で遅延が伸びている、といった説明も付く。
             // 切り分けきれていないことを、増設の要求として書かない。
             var t = """
-              ・電波は良好なのに、AP までの応答が遅い時間が長い（観測時間の\(Int(ratio(.congested) * 100))%）
+              ・RSSI は良好なのに、第一ホップの RTT が伸びる時間が長い（CONGESTED）（観測時間の\(Int(ratio(.congested) * 100))%）
                 端末から見えるのはここまでです。AP側の混雑・干渉のほか、
                 ルータの負荷や応答の優先度でも同じ見え方になります。
                 切り分けにはAP側のログ（同時接続数・チャンネル利用率）が必要です。
@@ -422,13 +455,13 @@ final class SampleLog {
         }
         if ratio(.weak) > 0.10 {
             items.append("""
-              ・電波が弱い場所での利用が長い（観測時間の\(Int(ratio(.weak) * 100))%）
+              ・RSSI が低い状態での利用が長い（WEAK）（観測時間の\(Int(ratio(.weak) * 100))%）
                 この場所はAPの電波が届きにくい可能性があります。設置位置の見直しをご検討ください。
             """)
         }
         if ratio(.isp) + ratio(.noInternet) > 0.05 {
             items.append("""
-              ・AP以降（社内NW〜回線）で遅延や到達不能が発生
+              ・AP以降（社内NW〜回線）で遅延・到達不能が発生（ISP / NO_INTERNET）
                 端末とAPの間は正常でした。上位側の確認をお願いします。
             """)
         }

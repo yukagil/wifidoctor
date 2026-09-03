@@ -884,6 +884,9 @@ final class FlippedStackView: NSStackView {
 
 final class HistoryWindowController: NSWindowController {
     private let log: SampleLog
+    /// レポート冒頭の「いまの状態」。常駐している側から渡してもらう。
+    /// ここが埋まっていないと、どの端末がどのAPの話なのかが書かれないレポートになる。
+    var statusInput: (() -> ITStatus.Input)?
     private let chart = ChartView()
     private let text = NSTextView()
     private let rangePop = NSPopUpButton()
@@ -976,7 +979,8 @@ final class HistoryWindowController: NSWindowController {
             NSView(),
             clearButton,
             NSButton(title: "更新", target: self, action: #selector(reloadAction)),
-            NSButton(title: "レポートを書き出す", target: self, action: #selector(exportReport)),
+            NSButton(title: "レポートをコピー", target: self, action: #selector(copyReport)),
+            NSButton(title: "書き出す", target: self, action: #selector(exportReport)),
         ])
         bar.orientation = .horizontal; bar.spacing = 8
 
@@ -1309,8 +1313,7 @@ final class HistoryWindowController: NSWindowController {
     /// レポート本文の組み立ては記録の量に比例して重く、畳んだままなら誰も見ない。
     private func renderDetail() {
         chart.samples = SampleLog.downsample(detailSamples, maxCount: 4000)
-        text.string = log.report(samples: detailSamples, title: reportTitle,
-                                 alreadyFiltered: true)
+        text.string = reportBody()
     }
 
     /// 書き出しに、いま何で絞っているのかを残す。受け取った人が範囲を誤解しないため。
@@ -1321,14 +1324,23 @@ final class HistoryWindowController: NSWindowController {
         return t
     }
 
+    /// 画面に出しているものと、コピー・書き出しの中身を1か所から作る。
+    /// 別々に組むと、見せたものと渡したものが食い違う。
+    private func reportBody() -> String {
+        log.report(samples: detailSamples, title: reportTitle,
+                   alreadyFiltered: true, status: statusInput?())
+    }
+
+    @objc private func copyReport() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(reportBody(), forType: .string)
+    }
+
     @objc private func exportReport() {
         let p = NSSavePanel()
         let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
         p.nameFieldStringValue = "wifi-report-\(f.string(from: Date())).txt"
-        // 畳んだままでも書き出せるように、ここで組み立てる
-        let body = text.string.isEmpty
-            ? log.report(samples: detailSamples, title: reportTitle, alreadyFiltered: true)
-            : text.string
+        let body = reportBody()
         guard let window else { return }
         p.beginSheetModal(for: window) { r in
             guard r == .OK, let url = p.url else { return }

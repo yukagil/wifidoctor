@@ -584,27 +584,21 @@ enum UITest {
     }
 
     /// 設定が保存されること。切ったつもりが再起動で戻るのは苦情になる。
-    /// ⌥⌘W は全アプリの標準ショートカットを奪うので、既定は切であること。
     private static func testSettingsPersistence() {
         guard Settings.isTemporary else {
             expect(false, "本物の設定に対して保存のテストを走らせようとした")
             return
         }
         Settings.store.removeObject(forKey: "notifyOn")
-        Settings.store.removeObject(forKey: "hotKeyOn")
 
         let a = AppState(monitor: Monitor())
         expect(a.notifyOn, "通知は既定で入り")
-        expect(!a.hotKeyOn, "⌥⌘W は既定で切（全アプリの標準ショートカットを奪うため）")
 
         a.notifyOn = false
-        a.hotKeyOn = true
         let b = AppState(monitor: Monitor())
         expect(!b.notifyOn, "通知を切ったら覚えている")
-        expect(b.hotKeyOn, "ホットキーを入れたら覚えている")
 
         Settings.store.removeObject(forKey: "notifyOn")
-        Settings.store.removeObject(forKey: "hotKeyOn")
     }
 
     /// 位置情報を断られた状態で、嘘を出さず理由を出すこと。

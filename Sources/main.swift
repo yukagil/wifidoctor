@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller = MenuController()
@@ -14,23 +13,19 @@ if CommandLine.arguments.contains("--status") {
     print("bundle:      \(Bundle.main.bundleURL.path)")
     print("login item:  \(LoginItem.statusText)")
     print("stable path: \(LoginItem.isInStableLocation)")
-    // ホットキーが他アプリと衝突していると登録に失敗する。黙って効かなくなるので確認できるようにする。
-    let hk = HotKey(keyCode: UInt32(kVK_ANSI_W), modifiers: UInt32(cmdKey | optionKey)) {}
-    print("hotkey ⌥⌘W: \(hk != nil ? "登録できる" : "登録失敗（他アプリと衝突）")")
     print("gateway:     \(NetProbe.defaultGateway(interface: LinkSampler.interfaceName) ?? "見つからない")")
     print("interface:   \(LinkSampler.interfaceName)")
     print("log dir:     \(SampleLog.dir.path)")
     exit(0)
 }
 
-// 動作確認用: 情シスへ返す「いまの状況」の文面をそのまま出す。
-// 画面のボタンと同じ組み立てを使うが、値は記録の最新1件と今のリンクから取る
-// （常駐して測っていないので、この経路では測定中の値までは出せない）。
-if CommandLine.arguments.contains("--itstatus") {
+// 動作確認用: 今日のレポートをそのまま標準出力に出す。
+// 画面の［コピー］［書き出す］と同じ本文だが、冒頭の「いまの状態」は
+// 記録の最新1件と今のリンクから組む（常駐して測っていないため）。
+if CommandLine.arguments.contains("--report") {
     let log = SampleLog()
     let today = log.load(date: Date())
     var i = ITStatus.Input()
-    i.appVersion = Build.version
     i.os = Host.os
     i.model = Host.model
     i.mac = LinkSampler.hardwareAddress
@@ -39,14 +34,14 @@ if CommandLine.arguments.contains("--itstatus") {
     i.ssid = link.ssid; i.bssid = link.bssid
     i.channel = link.channel; i.band = link.band; i.width = link.width
     i.rssi = link.rssi; i.noise = link.noise; i.txRate = link.txRate; i.phy = link.phy
+    i.gwIP = NetProbe.defaultGateway(interface: LinkSampler.interfaceName)
     if let last = today.last {
         i.verdict = last.scoreVerdict ?? .measuring
         i.score = last.score
         i.gwRTT = last.gwRTT; i.gwJitter = last.gwJitter; i.gwLoss = last.gwLoss
-        i.wanRTT = last.netRTT; i.dnsMS = last.dnsMS
+        i.wanRTT = last.netRTT; i.wanLoss = last.netLoss; i.dnsMS = last.dnsMS
     }
-    i.recent = today
-    print(ITStatus.text(i))
+    print(log.report(samples: today, title: "今日", status: i))
     exit(0)
 }
 
