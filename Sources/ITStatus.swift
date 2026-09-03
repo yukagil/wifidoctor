@@ -58,12 +58,15 @@ enum ITStatus {
     }
 
     static func head(_ i: Input) -> String {
-        var out = "■ いまの状態\n"
+        var out = "■ 現在の接続\n"
         guard i.associated else { return out + "  未接続\n" }
 
         // 接続先。どのAPの話なのかが無いレポートは、受け取っても動けない。
         out += "  " + link(i) + "\n"
-        out += "  " + state(i) + "\n"
+        if let since = i.apSince {
+            let m = Int(i.now.timeIntervalSince(since) / 60)
+            if m >= 1 { out += "  同一BSSIDに \(m)分 接続中\n" }
+        }
         out += "  第一ホップ(端末→AP)  " + hop(i) + "\n"
         out += "  上流(AP以降)         " + upstream(i) + "\n"
         var env: [String] = []
@@ -101,15 +104,16 @@ enum ITStatus {
         return t
     }
 
-    private static func state(_ i: Input) -> String {
-        // 内部の符号も出す。このアプリを知らない人が他の資料と突き合わせられるように。
-        var t = "判定 \(i.verdict.rawValue)（\(i.verdict.label)）"
+    /// 判定とスコアはこのアプリが決めた尺度で、調査の一次情報ではない。
+    /// 事実の節には入れず、参考の節にだけ出す。
+    /// 内部の符号も添えて、このアプリを知らない人が他の資料と突き合わせられるようにする。
+    static func classification(_ i: Input) -> String {
+        guard i.associated else { return "  現在: 未接続\n" }
+        var t = "  現在: \(i.verdict.rawValue)（\(i.verdict.label)）"
         if i.verdict != .measuring { t += " / スコア \(i.score)" }
-        if let since = i.apSince {
-            let m = Int(i.now.timeIntervalSince(since) / 60)
-            if m >= 1 { t += " / 同一BSSIDに \(m)分 接続中" }
-        }
-        return t
+        if i.macWarn { t += " / 端末側の負荷あり" }
+        else { t += " / 端末側の負荷は判定に影響していない" }
+        return t + "\n"
     }
 
     private static func hop(_ i: Input) -> String {
@@ -136,11 +140,7 @@ enum ITStatus {
     }
 
     private static func host(_ i: Input) -> String {
-        var t = String(format: "CPU %.0f%%", i.cpuPercent)
-        t += String(format: " / 端末の送受信 %.1fMbps", i.ownMbps)
-        // 端末側を疑わなくてよい、と言い切れるときだけ言う。
-        // 根拠なく「端末は問題ありません」と書くと、切り分けを1周やり直させる。
-        t += i.macWarn ? " / 端末側に負荷あり（下の判定を参照）" : " / 端末側の負荷は判定に影響なし"
-        return t
+        // 「端末は問題ありません」と書くのは事実ではなく判断なので、参考の節へ回す。
+        String(format: "CPU %.0f%% / 端末の送受信 %.1fMbps", i.cpuPercent, i.ownMbps)
     }
 }

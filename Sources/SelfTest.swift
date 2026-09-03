@@ -553,8 +553,13 @@ enum SelfTest {
         eq(ITStatus.device(base()), "Mac15,6 / macOS 26.2 / Wi-Fi MAC 80:a9:97:00:00:01",
            "端末の素性が1行にまとまる")
         expect(h.contains("SNR 36dB"), "SNR まで出す（RSSI だけでは干渉と距離を分けられない）")
-        // 内部の符号を併記する。読み手がこのアプリを知らなくても突き合わせられる。
-        expect(h.contains("CONGESTED"), "判定を内部の符号でも書く")
+        // 判定とスコアはこのアプリが決めた尺度。事実の節には入れない。
+        expect(!h.contains("CONGESTED") && !h.contains("スコア"),
+               "現在の接続にアプリ独自の尺度を混ぜない")
+        // 参考の節では、内部の符号を日本語と併記して出す。
+        let c = ITStatus.classification(base())
+        expect(c.contains("CONGESTED（APが混雑）"), "参考の節では符号と日本語を併記する")
+        expect(c.contains("スコア 62"), "参考の節にスコアを出す")
 
         // 言い換えを持ち込まない
         for plain in ["ゆらぎ", "とりこぼし", "電波の強さ"] {
@@ -579,19 +584,20 @@ enum SelfTest {
 
         // 端末側を疑わなくてよい、と根拠なく言わない
         var busy = base(); busy.macWarn = true
-        expect(!ITStatus.head(busy).contains("判定に影響なし"),
-               "端末が重いときに「影響なし」と書かない")
-        expect(ITStatus.head(base()).contains("判定に影響なし"),
+        expect(!ITStatus.classification(busy).contains("影響していない"),
+               "端末が重いときに「影響していない」と書かない")
+        expect(ITStatus.classification(base()).contains("影響していない"),
                "端末が問題ないときは、そう書いて切り分けを1周省く")
+        expect(ITStatus.head(base()).contains("CPU 0%"), "端末側の負荷は数値として事実の節に出す")
 
         // レポートに畳み込まれること。渡すものが2種類あると、
         // どちらを見せたのか分からなくなる。
         let log = SampleLog()
         let r = log.report(samples: [sample(0)], title: "今日", status: base())
-        expect(r.contains("■ いまの状態"), "レポートの冒頭に入る")
+        expect(r.contains("■ 現在の接続"), "レポートの冒頭に入る")
         expect(r.contains("Mac15,6"), "レポートの見出しに端末が出る")
-        expect(!log.report(samples: [sample(0)], title: "今日").contains("■ いまの状態"),
-               "いまの状態が無いときは、その節ごと出さない")
+        expect(!log.report(samples: [sample(0)], title: "今日").contains("■ 現在の接続"),
+               "現在の接続が分からないときは、その節ごと出さない")
     }
 
     /// レポートの読み手は情シス。値と、どのAPの話なのかが揃っていること。
@@ -601,22 +607,49 @@ enum SelfTest {
         APNames.set("会議室A", for: "aa:bb:cc:dd:ee:01")
         defer { APNames.set("", for: "aa:bb:cc:dd:ee:01") }
 
-        var mixed = [sample(0, score: 95, verdict: .ok)]
-        mixed += (1...20).map { sample($0 * 5, score: 30, verdict: .congested) }
+        /// しきい値を超える1件。抽出条件は RTT>12ms / ジッタ>6ms / ロス>2% / RSSI<-68dBm。
+        func bad(_ sec: Int, rtt: Double = 40, jitter: Double = 20,
+                 bssid: String = "aa:bb:cc:dd:ee:01") -> Sample {
+            var x = sample(sec, bssid: bssid)
+            x.gwRTT = rtt; x.gwJitter = jitter
+            return x
+        }
+        var mixed = [sample(0)]
+        mixed += (1...30).map { bad($0 * 5) }
+        mixed += (31...40).map { sample($0 * 5) }
         let r = log.report(samples: mixed, title: "今日")
 
+        // どの基準で切り出したのかが書かれていないと、受け取った側で検証できない
+        expect(r.contains("抽出条件: 第一ホップ RTT > 12ms"), "抽出のしきい値を明記する")
+        expect(r.contains("超過: RTT") || r.contains("超過: ジッタ"),
+               "判定名ではなく、超えた項目そのものを書く")
         // どのAPで起きたのかが無い時刻の羅列は、受け取った側で調べようがない
-        expect(r.contains("AP aa:bb:cc:dd:ee:01"), "不調の区間にAPが添えられる")
+        expect(r.contains("AP aa:bb:cc:dd:ee:01"), "超過した区間にAPが添えられる")
         expect(r.contains("会議室A"), "呼び名を付けてあれば併記する")
-        // 素の指標名で書く
-        for key in ["GW RTT", "リンクレート", "RSSI", "CONGESTED"] {
+        for key in ["第一ホップ RTT", "リンクレート", "RSSI", "p50", "p95"] {
             expect(r.contains(key), "レポートに \(key) が出る")
         }
         for plain in ["ふだん ", "悪いとき ", "ゆらぎ ", "とりこぼし "] {
             expect(!r.contains(plain), "レポートに「\(plain)」を使わない")
         }
-        // 何の値なのかが分かるように、分位を明示する
-        expect(r.contains("p50"), "中央値であることを書く")
+
+        // 事実の節に、このアプリが決めた尺度（スコア・判定）を混ぜないこと。
+        // 混ぜると、独自の分類が調査の一次情報として引用されてしまう。
+        let facts = r.components(separatedBy: "■ 参考")[0]
+        expect(!facts.contains("スコア"), "事実の節にスコアを出さない")
+        for v in Verdict.allCases where v != .dns {
+            expect(!facts.contains(v.rawValue), "事実の節に判定 \(v.rawValue) を出さない")
+        }
+        expect(!facts.contains("判定"), "事実の節に「判定」という語を出さない")
+        // 参考の節であることが読めば分かること
+        expect(r.contains("一次情報は上の実測値です"), "どちらが一次情報かを書く")
+
+        // APの切り替わりは、前後の数値が変わる境目なので事実として要る
+        var roamed = (0..<20).map { sample($0 * 5, bssid: "aa:bb:cc:dd:ee:01") }
+        roamed += (20..<40).map { sample($0 * 5, bssid: "aa:bb:cc:dd:ee:02") }
+        let r2 = log.report(samples: roamed, title: "移動あり")
+        expect(r2.contains("■ APの切り替わり"), "切り替わりの節が出る")
+        expect(r2.contains("aa:bb:cc:dd:ee:01 → aa:bb:cc:dd:ee:02"), "切り替わりの前後を書く")
     }
 
     /// 追記→全件読み→差分読みが一致すること。差分読みは実装が壊れても
@@ -664,7 +697,7 @@ enum SelfTest {
         eq(log.report(samples: [], title: "空"), "空 の記録はありません。", "空のレポート")
 
         let one = log.report(samples: [sample(0)], title: "1件")
-        expect(one.contains("観測 1 件"), "1件でもレポートが出る")
+        expect(one.contains("測定 1 件"), "1件でもレポートが出る")
 
         var mixed = [sample(0, score: 95, verdict: .ok)]
         mixed += (1...5).map { sample($0 * 5, score: 30, verdict: .congested) }
@@ -672,22 +705,23 @@ enum SelfTest {
         mixed += (0...2).map { sample(100 + $0 * 5, score: 10, verdict: .weak, bssid: nil) }
         let r = log.report(samples: mixed, title: "混在")
         expect(r.contains("APが混雑"), "問題の種別が日本語でも出る")
-        expect(r.contains("不調区間"), "区間の見出しが出る")
+        expect(r.contains("しきい値を超えた区間"), "区間の見出しが出る")
         expect(!r.contains("nan") && !r.contains("inf"), "数値が壊れていない")
 
         // 内部の符号（OK / CONGESTED など）は、必ず日本語と併記で出すこと。
         // 符号だけだとこのアプリを知らない人に伝わらず、
         // 日本語だけだと他の資料と突き合わせられない。
-        for v in Verdict.allCases where r.contains(v.rawValue) {
-            expect(r.contains("\(v.rawValue)（\(v.label)）"),
-                   "レポートの \(v.rawValue) に日本語が併記されていない")
+        let refPart = r.components(separatedBy: "■ 参考").dropFirst().joined()
+        for v in Verdict.allCases where refPart.contains(v.rawValue) {
+            expect(refPart.contains("\(v.rawValue)（\(v.label)）"),
+                   "参考の節の \(v.rawValue) に日本語が併記されていない")
         }
 
         // BSSIDが1件も無い記録でも落ちない
         // 原因が偏っていれば、AP側でできる対処を申し送りに出すこと
         let sticky = (0..<40).map { sample($0 * 5, score: 30, verdict: .sticky) }
         let r3 = SampleLog().report(samples: sticky, title: "遠いAP多発")
-        expect(r3.contains("情シスへの申し送り"), "偏った原因があれば申し送りを出す")
+        expect(r3.contains("確認をお願いしたいこと"), "偏った原因があれば申し送りを出す")
         expect(r3.contains("802.11") || r3.contains("最小RSSI"), "AP側の具体策を示す")
 
         let clean = (0..<40).map { sample($0 * 5, score: 95, verdict: .ok) }
@@ -1172,7 +1206,7 @@ enum SelfTest {
             return x
         }
         let r = SampleLog().report(samples: ss, title: "場所別", usableAPs: 1)
-        expect(r.contains("AP別の実績"), "AP別の見出しが出る")
+        expect(r.contains("AP別の実測値"), "AP別の見出しが出る")
         expect(r.contains("13F 執務室"), "呼び名が場所別に出る")
         APNames.set("", for: bssid)
     }
@@ -1410,8 +1444,8 @@ enum SelfTest {
         // 家のWi-Fiと会議室のAPを混ぜた点数は、どちらの話でもなくなる。
         var oneAP: [Sample] = []
         for i in 0..<120 { oneAP.append(sample(i * 5, score: 90, bssid: "aa:bb:cc:00:00:01")) }
-        expect(SampleLog().report(samples: oneAP, title: "1か所").contains("■ スコア  p50"),
-               "1か所なら全体のスコアを出す")
+        expect(SampleLog().report(samples: oneAP, title: "1か所").contains("AP別の実測値"),
+               "1か所でもAPごとの実測値を出す")
 
         var twoAP = oneAP
         for i in 0..<120 {
@@ -1419,9 +1453,11 @@ enum SelfTest {
                                 bssid: "aa:bb:cc:00:00:02"))
         }
         let mixed = SampleLog().report(samples: twoAP, title: "2か所")
-        expect(mixed.contains("2か所につないでいるため"), "混ざっていれば平均を出さない")
+        // 場所をまたいだ平均は出さない。APごとに分けて出す。
+        expect(mixed.contains("aa:bb:cc:00:00:01") && mixed.contains("aa:bb:cc:00:00:02"),
+               "混ざっていればAPごとに分けて出す")
         expect(!mixed.contains("■ 点数  ふだん"), "混ざった平均を書かない")
-        expect(mixed.contains("AP別の実績"), "代わりにAPごとを見せる")
+        expect(mixed.contains("AP別の実測値"), "代わりにAPごとを見せる")
 
         // しきい値をサイトに合わせて動かせること。
         // 集中トンネル型では第一ホップがAPではないので、12ms固定だと常に混雑になる。

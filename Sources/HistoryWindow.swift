@@ -1028,7 +1028,13 @@ final class HistoryWindowController: NSWindowController {
         detailBox.orientation = .vertical
         detailBox.alignment = .leading
         detailBox.spacing = 8
-        detailBox.setViews([chart, legend, textScroll], in: .top)
+        // これが渡す本文そのもの。何なのかを書いておかないと、
+        // 画面の下に付いた読めない枠にしか見えない。
+        let textHead = NSTextField(labelWithString:
+            "レポート本文 — 上の［レポートをコピー］［書き出す］で、これをそのまま渡せます")
+        textHead.font = .systemFont(ofSize: 10)
+        textHead.textColor = .tertiaryLabelColor
+        detailBox.setViews([chart, legend, textHead, textScroll], in: .top)
         detailBox.isHidden = true
         fillWidth(detailBox)
 
@@ -1076,7 +1082,9 @@ final class HistoryWindowController: NSWindowController {
             // 画面より高くなって下が欠ける。譲れる形にして、狭い画面では縮める。
             // 判定帯＋4段＋時刻軸。これを下回ると段が潰れて線の形が読めない。
             chart.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
-            textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
+            // 60pt では枠しか見えず、何が入っているのか分からない。
+            // ここは下限で、窓を高くした分はこの枠がいちばん多く受け取る（伸びやすさ 249）。
+            textScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
         ])
         // 好みの高さを制約で書くと、優先度を下げても fittingSize に入ってしまい、
         // 詳細を開いた瞬間に窓が画面より高くなる（下が欠けて縮められない）。
