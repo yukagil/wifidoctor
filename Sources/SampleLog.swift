@@ -280,45 +280,11 @@ final class SampleLog {
         // 途切れが短いものは1つの区間として束ね、長かった判定でまとめて呼ぶ。
         out += "\n■ 調子が悪かった時間帯\n"
 
-        struct Span {
-            var from: Sample
-            var to: Sample
-            var worst: Sample
-            var seconds: TimeInterval = 0
-            var byVerdict: [String: TimeInterval] = [:]
-            /// いちばん長く続いた判定でこの区間を呼ぶ。
-            var label: String {
-                let v = byVerdict.max { $0.value < $1.value }?.key ?? from.verdict
-                return Verdict(rawValue: v)?.label ?? v
-            }
-        }
-        var spans: [Span] = []
-        let gapToMerge: TimeInterval = 60   // これ以内の小康は同じ不調として扱う
-
-        for (i, x) in samples.enumerated() {
-            guard Verdict(rawValue: x.verdict)?.isProblem ?? false else { continue }
-            let d = durations[i]
-            if var last = spans.last, x.at.timeIntervalSince(last.to.at) <= gapToMerge {
-                last.to = x
-                last.seconds += d
-                last.byVerdict[x.verdict, default: 0] += d
-                if x.score < last.worst.score { last.worst = x }
-                spans[spans.count - 1] = last
-            } else {
-                spans.append(Span(from: x, to: x, worst: x, seconds: d,
-                                  byVerdict: [x.verdict: d]))
-            }
-        }
+        let spans = SampleLog.problemSpans(samples, durations)
 
         // 数秒の揺れは行にしない。件数だけ添えて、読む側の目を長い方へ向ける。
         let shown = spans.filter { $0.seconds >= 30 }
-        for sp in shown {
-            out += String(format: "  %@-%@（%@）  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms\n",
-                          tf.string(from: sp.from.at), tf.string(from: sp.to.at),
-                          PlaceReport.spanWord(sp.seconds), sp.label,
-                          sp.worst.score, sp.worst.rssi, sp.worst.channel,
-                          sp.worst.txRate, sp.worst.gwRTT ?? -1)
-        }
+        for sp in shown { out += "  " + sp.line(tf) + "\n" }
         if shown.isEmpty { out += "  なし\n" }
         let brief = spans.count - shown.count
         if brief > 0 { out += "  （ほかに30秒未満の短い不調が \(brief) 回）\n" }
@@ -327,7 +293,7 @@ final class SampleLog {
         out += placeSection(samples: samples, durations: durations,
                             includeHours: includeHours)
 
-        out += advice(byVerdict: byVerdict, total: Sample.totalSeconds(samples),
+        out += SampleLog.advice(byVerdict: byVerdict, total: Sample.totalSeconds(samples),
                       usableAPs: usableAPs)
         return out
     }
@@ -372,9 +338,56 @@ final class SampleLog {
         return out
     }
 
+    /// ひとつながりの不調。
+    ///
+    /// 判定は閾値の境目で振れる（例: 第一ホップが 12ms を挟んで往復すると
+    /// 「APが混雑」と「AP以降が遅い」を数秒ごとに行き来する）。
+    /// そのまま並べると細切れの数十行になり、受け取った人には読めない。
+    /// 途切れが短いものは1つの区間として束ね、長く続いた判定でまとめて呼ぶ。
+    struct ProblemSpan {
+        var from: Sample
+        var to: Sample
+        var worst: Sample
+        var seconds: TimeInterval = 0
+        var byVerdict: [String: TimeInterval] = [:]
+        /// いちばん長く続いた判定でこの区間を呼ぶ。
+        var label: String {
+            let v = byVerdict.max { $0.value < $1.value }?.key ?? from.verdict
+            return Verdict(rawValue: v)?.label ?? v
+        }
+        /// 1行で書いたもの。レポートと「いまの状況」で同じ書き方にする。
+        func line(_ tf: DateFormatter) -> String {
+            String(format: "%@-%@（%@）  %@  最悪%d点  RSSI %ddBm / ch%d / %.0fMbps / GW %.1fms",
+                   tf.string(from: from.at), tf.string(from: to.at),
+                   PlaceReport.spanWord(seconds), label,
+                   worst.score, worst.rssi, worst.channel, worst.txRate, worst.gwRTT ?? -1)
+        }
+    }
+
+    /// - Parameter gapToMerge: これ以内の小康は同じ不調として扱う。
+    static func problemSpans(_ samples: [Sample], _ durations: [TimeInterval],
+                             gapToMerge: TimeInterval = 60) -> [ProblemSpan] {
+        var spans: [ProblemSpan] = []
+        for (i, x) in samples.enumerated() {
+            guard Verdict(rawValue: x.verdict)?.isProblem ?? false else { continue }
+            let d = i < durations.count ? durations[i] : 0
+            if var last = spans.last, x.at.timeIntervalSince(last.to.at) <= gapToMerge {
+                last.to = x
+                last.seconds += d
+                last.byVerdict[x.verdict, default: 0] += d
+                if x.score < last.worst.score { last.worst = x }
+                spans[spans.count - 1] = last
+            } else {
+                spans.append(ProblemSpan(from: x, to: x, worst: x, seconds: d,
+                                         byVerdict: [x.verdict: d]))
+            }
+        }
+        return spans
+    }
+
     /// 情シスに渡したときに「で、何をすればいいのか」が分かるようにする。
     /// クライアント側で直せない問題は、AP側の設定で直せることが多い。
-    private func advice(byVerdict: [String: TimeInterval], total: TimeInterval,
+    static func advice(byVerdict: [String: TimeInterval], total: TimeInterval,
                         usableAPs: Int = -1) -> String {
         guard total > 0 else { return "" }
         func ratio(_ v: Verdict) -> Double { (byVerdict[v.rawValue] ?? 0) / total }

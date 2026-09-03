@@ -642,6 +642,25 @@ enum Phrase {
 }
 
 /// 表示用のバージョン。配った後に「どのビルドか」を聞けるようにしておく。
+/// この機械のこと。情シスが最初に聞くのはここ。
+enum Host {
+    static var os: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "macOS \(v.majorVersion).\(v.minorVersion)"
+            + (v.patchVersion > 0 ? ".\(v.patchVersion)" : "")
+    }
+
+    /// `Mac15,3` のような機種の識別子。人が読む名前は付いていないが、
+    /// 情シスはこれで世代と機種を引ける。
+    static var model: String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "" }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &buf, &size, nil, 0) == 0 else { return "" }
+        return String(cString: buf)
+    }
+}
+
 enum Build {
     static var version: String {
         let d = Bundle.main.infoDictionary

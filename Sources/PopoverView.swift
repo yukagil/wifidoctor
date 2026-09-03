@@ -837,12 +837,24 @@ struct DetailView: View {
                 Divider().padding(.top, 10)
 
                 VStack(spacing: 7) {
+                    // 聞かれて答える場面が先に来るので、コピーを上に置く
+                    Button(action: { app.copyStatusForIT() }) {
+                        Label("いまの状況をコピー", systemImage: "doc.on.clipboard")
+                            .font(.system(size: 12))
+                            .frame(maxWidth: .infinity)
+                    }
+                    Text("情シスに「どういう状況？」と聞かれたら、これを貼れば伝わります")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     Button(action: { app.exportReport() }) {
                         Label("今日のレポートを書き出す", systemImage: "square.and.arrow.up")
                             .font(.system(size: 12))
                             .frame(maxWidth: .infinity)
                     }
-                    Text("情シスに相談するときは、このレポートを添えると原因が伝わります")
+                    .padding(.top, 4)
+                    Text("腰を据えて調べてもらうときは、1日分のこちらを添える")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)

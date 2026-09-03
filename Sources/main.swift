@@ -23,6 +23,33 @@ if CommandLine.arguments.contains("--status") {
     exit(0)
 }
 
+// 動作確認用: 情シスへ返す「いまの状況」の文面をそのまま出す。
+// 画面のボタンと同じ組み立てを使うが、値は記録の最新1件と今のリンクから取る
+// （常駐して測っていないので、この経路では測定中の値までは出せない）。
+if CommandLine.arguments.contains("--itstatus") {
+    let log = SampleLog()
+    let today = log.load(date: Date())
+    var i = ITStatus.Input()
+    i.appVersion = Build.version
+    i.os = Host.os
+    i.model = Host.model
+    i.mac = LinkSampler.hardwareAddress
+    let link = LinkSampler.read()
+    i.associated = link.associated
+    i.ssid = link.ssid; i.bssid = link.bssid
+    i.channel = link.channel; i.band = link.band; i.width = link.width
+    i.rssi = link.rssi; i.noise = link.noise; i.txRate = link.txRate; i.phy = link.phy
+    if let last = today.last {
+        i.verdict = last.scoreVerdict ?? .measuring
+        i.score = last.score
+        i.gwRTT = last.gwRTT; i.gwJitter = last.gwJitter; i.gwLoss = last.gwLoss
+        i.wanRTT = last.netRTT; i.dnsMS = last.dnsMS
+    }
+    i.recent = today
+    print(ITStatus.text(i))
+    exit(0)
+}
+
 // 動作確認用: 実効速度テストだけを走らせて生の結果を出す（回線を約20秒占有する）
 if CommandLine.arguments.contains("--speedtest") {
     let r = NetProbe.speedTest()

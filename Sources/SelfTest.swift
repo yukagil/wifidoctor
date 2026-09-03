@@ -49,6 +49,7 @@ enum SelfTest {
         testTailReading()
         testRoamRecovery()
         testDateFormatIndependence()
+        testITStatus()
 
         print("チェック \(checks) 件")
         if failures.isEmpty {
@@ -522,6 +523,97 @@ enum SelfTest {
                gwRTT: 5, gwJitter: 1, gwLoss: 0, netRTT: 20, netLoss: 0, dnsMS: 15,
                rxMbps: rx, txMbps: 0.5,
                score: score, verdict: verdict.rawValue)
+    }
+
+    /// 情シスに貼る「いまの状況」。
+    /// 聞かれて返すものなので、短さと、書いてある事実の正しさの両方が要る。
+    private static func testITStatus() {
+        let now = Date(timeIntervalSince1970: 631_152_000 + 3600)
+        func base() -> ITStatus.Input {
+            var i = ITStatus.Input()
+            i.now = now
+            i.appVersion = "WiFiDoctor 1.0"
+            i.os = "macOS 26.2"; i.model = "Mac15,6"; i.mac = "80:a9:97:00:00:01"
+            i.associated = true
+            i.ssid = "OFFICE"; i.bssid = "aa:bb:cc:dd:ee:01"
+            i.channel = 44; i.band = 5; i.width = 40
+            i.rssi = -56; i.noise = -92; i.txRate = 400; i.phy = "11ax"
+            i.verdict = .ok; i.score = 88
+            i.gwRTT = 5; i.gwJitter = 1; i.gwLoss = 0; i.wanRTT = 20; i.dnsMS = 15
+            return i
+        }
+
+        // 情シスが最初に引く鍵が必ず入っていること。どれが欠けても聞き返しになる。
+        let t = ITStatus.text(base())
+        for key in ["Mac15,6", "macOS 26.2", "80:a9:97:00:00:01", "OFFICE",
+                    "aa:bb:cc:dd:ee:01", "ch44", "-56dBm", "Asia/Tokyo"] {
+            expect(t.contains(key), "いまの状況に \(key) が入る")
+        }
+        expect(t.contains("WiFiDoctor 1.0"), "どのビルドが出した文面か分かる")
+        expect(t.contains("含まれるもの"), "何を渡すことになるかが本人に見えている")
+
+        // チャットに貼る前提。長すぎると読まれない。
+        var empty = base(); empty.recent = []
+        expect(ITStatus.text(empty).split(separator: "\n").count <= 20,
+               "記録が無いときの文面は20行以内")
+        expect(ITStatus.text(empty).contains("記録がありません"), "記録が無いことを隠さない")
+
+        // 未接続なら、電波の数値を並べても意味がない
+        var off = base(); off.associated = false
+        expect(ITStatus.text(off).contains("接続していません"), "未接続をそう書く")
+        expect(!ITStatus.text(off).contains("ch44"), "未接続でチャンネルを書かない")
+
+        // 位置情報を断られていると、SSID/BSSID が読めない。
+        // 「不明」とだけ書くと、情シスは端末の異常だと受け取る。
+        var denied = base()
+        denied.locationDenied = true; denied.ssid = nil; denied.bssid = nil
+        expect(ITStatus.text(denied).contains("位置情報"), "名前が出ない理由を書く")
+        var nameless = base(); nameless.ssid = nil; nameless.bssid = nil
+        expect(ITStatus.text(nameless).contains("位置情報"),
+               "許可の状態が分からない経路でも、名前が出ない理由は書く")
+
+        // 直近1時間の外は「いま」ではない
+        var win = base()
+        win.recent = [sample(-600, score: 20, verdict: .congested),       // 1時間より前
+                      sample(-570, score: 20, verdict: .congested),
+                      sample(3500, score: 85, verdict: .ok)]
+        let wt = ITStatus.text(win)
+        expect(wt.contains("■ 直近60分"), "見ている範囲を明示する")
+        expect(!wt.contains("APが混雑  最悪20点"), "1時間より前の不調は「いま」に混ぜない")
+
+        // 不調区間は長い順に3件まで。全部並べるとチャットに貼れなくなる。
+        var many = base()
+        many.recent = (0..<12).flatMap { k -> [Sample] in
+            (0..<12).map { sample(3600 - 3500 + k * 280 + $0 * 5,
+                                  score: 30, verdict: .congested) }
+        }
+        let mt = ITStatus.text(many)
+        expect(mt.contains("ほかに30秒以上の不調が"), "並べきれない分は件数で示す")
+        expect(mt.split(separator: "\n").filter { $0.contains("最悪") }.count <= 3,
+               "不調の行は3件まで")
+
+        // SSID に改行を仕込まれても、行を偽造させない
+        var evil = base()
+        evil.ssid = "OFFICE\n状態: 快適（100点）"
+        let et = ITStatus.text(evil)
+        expect(et.split(separator: "\n").filter { $0.hasPrefix("状態: ") }.count == 1,
+               "SSIDに仕込まれた改行で行を増やせない")
+
+        // Mac側を疑わなくてよい、と根拠なく言わない
+        var busy = base(); busy.macWarn = true; busy.macLine = "CPUが混んでいます"
+        expect(!ITStatus.text(busy).contains("端末側の負荷は原因ではありません"),
+               "Mac側が重いときに「原因ではない」と書かない")
+        expect(ITStatus.text(base()).contains("端末側の負荷は原因ではありません"),
+               "Mac側が問題ないときは、そう書いて切り分けを1周省く")
+
+        // 申し送りはレポートと同じ判断から作る。別々に書くと言うことが食い違う。
+        var congested = base()
+        congested.recent = (0..<40).map { sample(3600 - 1200 + $0 * 30,
+                                                 score: 30, verdict: .congested) }
+        expect(ITStatus.text(congested).contains("確認をお願いしたいこと"),
+               "情シスに何を頼むかが書かれる")
+        expect(ITStatus.text(congested).contains("AP側のログ"),
+               "頼む内容がレポートと同じ言い方になる")
     }
 
     /// 追記→全件読み→差分読みが一致すること。差分読みは実装が壊れても

@@ -672,6 +672,68 @@ final class AppState: ObservableObject {
         self.flash = flash
     }
 
+    /// 情シスに「いまどうなってるの？」と聞かれたときの返信を作って、貼り付け板に置く。
+    ///
+    /// ファイルに書き出すレポートとは別に用意している。チャットで聞かれた質問に、
+    /// ファイルを添付して返させるのは重い。聞かれたことに、その場で返せる長さのものが要る。
+    func copyStatusForIT() {
+        let text = ITStatus.text(statusInput())
+        // 置き換える前に中身を捨てないと、古い型の内容が残って別のアプリで化ける
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        flash = "いまの状況をコピーしました。情シスへの返信にそのまま貼れます"
+    }
+
+    /// 生きた計測から、文面を組むのに必要な値だけを取り出す。
+    func statusInput(now: Date = Date()) -> ITStatus.Input {
+        var i = ITStatus.Input()
+        i.now = now
+        i.appVersion = Build.version
+        i.os = Host.os
+        i.model = Host.model
+        i.mac = LinkSampler.hardwareAddress
+
+        let l = monitor.link
+        i.associated = l.associated
+        i.ssid = l.ssid
+        i.bssid = l.bssid
+        i.apLabel = snap.apNamed ? snap.apShort : nil
+        i.channel = l.channel; i.band = l.band; i.width = l.width
+        i.rssi = l.rssi; i.noise = l.noise; i.txRate = l.txRate; i.phy = l.phy
+        i.apSince = monitor.apSince
+
+        i.verdict = monitor.verdict
+        i.score = monitor.score
+        i.gwRTT = monitor.gw?.avg
+        i.gwJitter = monitor.gw?.stddev
+        i.gwLoss = monitor.gw?.loss
+        i.wanRTT = monitor.wan?.avg
+        i.dnsMS = monitor.dnsMS
+
+        i.vpn = monitor.vpnInterface
+        i.cpuPercent = monitor.load.cpuPercent
+        i.ownMbps = monitor.ownMbps
+        i.macLine = snap.macLine
+        i.macWarn = snap.macWarn
+        i.usableAPs = snap.usableAPs
+        i.coChannel = monitor.scanner.coChannelCount(l)
+        i.locationDenied = snap.locationDenied
+        i.recent = recentAcrossMidnight(now: now)
+        return i
+    }
+
+    /// 直近1時間だけが要る。0時をまたいだ直後は、今日のファイルにまだ数分しか無い。
+    /// 前日のぶんを足さないと「記録がありません」と返してしまう。
+    private func recentAcrossMidnight(now: Date) -> [Sample] {
+        let from = now.addingTimeInterval(-ITStatus.window)
+        var samples = recent.isEmpty ? monitor.log.load(date: now) : recent
+        if from < Calendar.current.startOfDay(for: now) {
+            let yesterday = now.addingTimeInterval(-86400)
+            samples = monitor.log.load(date: yesterday).filter { $0.at >= from } + samples
+        }
+        return samples
+    }
+
     func exportReport() {
         let p = NSSavePanel()
         let f = SampleLog.dayFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
