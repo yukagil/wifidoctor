@@ -52,6 +52,9 @@ struct PlaceSummary: Identifiable {
     /// 5発中1発でも落ちた計測の割合。損失率の中央値は常に0になって何も区別できない。
     var lossRatio: Double?
     var rssi: Int?
+    /// リンクレート（PHYレート）の中央値。実効速度ではないが、
+    /// 変調がどこまで落ちていたかの目安になる。
+    var txRate: Double?
 
     /// つながっていた時間帯。上の帯と突き合わせるために持つ。
     var hours: Set<Int>
@@ -103,6 +106,7 @@ enum PlaceReport {
             var rtt: [(Double, TimeInterval)] = []
             var jitter: [(Double, TimeInterval)] = []
             var rssi: [(Double, TimeInterval)] = []
+            var txRate: [(Double, TimeInterval)] = []
             var lossChecks = 0
             var lossEvents = 0
             var badSeconds: TimeInterval = 0
@@ -131,6 +135,7 @@ enum PlaceReport {
             if let v = s.gwRTT { acc[key, default: Acc()].rtt.append((v, d)) }
             if let v = s.gwJitter { acc[key, default: Acc()].jitter.append((v, d)) }
             acc[key, default: Acc()].rssi.append((Double(s.rssi), d))
+            if s.txRate > 0 { acc[key, default: Acc()].txRate.append((s.txRate, d)) }
             if let l = s.gwLoss {
                 acc[key, default: Acc()].lossChecks += 1
                 if l > 0 { acc[key, default: Acc()].lossEvents += 1 }
@@ -177,6 +182,7 @@ enum PlaceReport {
                 lossRatio: (enough && a.lossChecks > 0)
                     ? Double(a.lossEvents) / Double(a.lossChecks) : nil,
                 rssi: enough ? quantile(a.rssi, 0.5).map { Int($0.rounded()) } : nil,
+                txRate: enough ? quantile(a.txRate, 0.5) : nil,
                 // 数十秒だけ掠めた時間帯まで「そこに居た」と書くと、上の帯と話が合わなくなる
                 hours: Set(a.hourSeconds.filter { $0.value >= 60 }.keys))
         }

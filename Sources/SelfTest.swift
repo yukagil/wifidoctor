@@ -620,12 +620,13 @@ enum SelfTest {
         let r = log.report(samples: mixed, title: "今日")
 
         // どの基準で切り出したのかが書かれていないと、受け取った側で検証できない
-        expect(r.contains("抽出条件: 第一ホップ RTT > 12ms"), "抽出のしきい値を明記する")
-        expect(r.contains("超過: RTT") || r.contains("超過: ジッタ"),
+        expect(r.contains("条件: RTT>12ms"), "抽出のしきい値を明記する")
+        expect(r.contains("RTT,ジッタ") || r.contains("ジッタ,RTT"),
                "判定名ではなく、超えた項目そのものを書く")
         // どのAPで起きたのかが無い時刻の羅列は、受け取った側で調べようがない
-        expect(r.contains("AP aa:bb:cc:dd:ee:01"), "超過した区間にAPが添えられる")
-        expect(r.contains("会議室A"), "呼び名を付けてあれば併記する")
+        let spanLine = r.components(separatedBy: "\n")
+            .first { $0.contains("RTT,ジッタ") || $0.contains("ジッタ,RTT") } ?? ""
+        expect(spanLine.contains("会議室A"), "超過した区間にAPが添えられる: \(spanLine)")
         for key in ["第一ホップ RTT", "リンクレート", "RSSI", "p50", "p95"] {
             expect(r.contains(key), "レポートに \(key) が出る")
         }
